@@ -37,7 +37,7 @@ We ONLY read emails from these domains:
 - Bill Graham Civic (`@billgrahamcivic.com`)
 - APE Concerts (`@apeconcerts.com`)
 
-Full list: [src/lib/approved-senders.ts](./src/lib/approved-senders.ts)
+Full list: [src/lib/approved-senders.ts](https://github.com/builtby-win/sync.areyougo.ing/blob/main/src/lib/approved-senders.ts)
 
 ## Verify This Deployment
 

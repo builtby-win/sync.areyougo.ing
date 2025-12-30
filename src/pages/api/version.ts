@@ -10,7 +10,7 @@ export const GET: APIRoute = () => {
       commit,
       commitShort,
       deployedAt,
-      repo: 'https://github.com/snoolord/sync.areyougo.ing',
+      repo: 'https://github.com/builtby-win/sync.areyougo.ing',
     }),
     {
       status: 200,
