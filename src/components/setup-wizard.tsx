@@ -1,0 +1,532 @@
+import { useState } from 'react'
+import { encryptPassword } from '../lib/encryption'
+
+interface User {
+  id: string
+  email: string
+  name: string | null
+}
+
+interface ExistingCredentials {
+  provider: string
+  imapEmail: string
+  lastSyncAt: number | null
+}
+
+interface Props {
+  user: User
+  existingCredentials: ExistingCredentials | null
+}
+
+type Provider = 'icloud' | 'gmail' | 'yahoo' | 'outlook' | 'other'
+
+interface ProviderConfig {
+  name: string
+  host: string
+  port: number
+  instructions: string[]
+  helpUrl: string
+}
+
+const PROVIDERS: Record<Provider, ProviderConfig> = {
+  icloud: {
+    name: 'iCloud Mail',
+    host: 'imap.mail.me.com',
+    port: 993,
+    instructions: [
+      'Go to appleid.apple.com and sign in',
+      'Go to "Sign-In and Security" → "App-Specific Passwords"',
+      'Click "Generate an app-specific password"',
+      'Name it "areyougo.ing" and click Create',
+      'Copy the password shown (you won\'t see it again)',
+    ],
+    helpUrl: 'https://support.apple.com/en-us/102654',
+  },
+  gmail: {
+    name: 'Gmail',
+    host: 'imap.gmail.com',
+    port: 993,
+    instructions: [
+      'Go to myaccount.google.com/apppasswords',
+      'Sign in if prompted',
+      'Select "Mail" as the app and your device',
+      'Click "Generate"',
+      'Copy the 16-character password shown',
+    ],
+    helpUrl: 'https://support.google.com/accounts/answer/185833',
+  },
+  yahoo: {
+    name: 'Yahoo Mail',
+    host: 'imap.mail.yahoo.com',
+    port: 993,
+    instructions: [
+      'Go to login.yahoo.com/account/security',
+      'Scroll to "Generate app password"',
+      'Select "Other App" and enter "areyougo.ing"',
+      'Click "Generate"',
+      'Copy the password shown',
+    ],
+    helpUrl: 'https://help.yahoo.com/kb/SLN15241.html',
+  },
+  outlook: {
+    name: 'Outlook / Hotmail',
+    host: 'outlook.office365.com',
+    port: 993,
+    instructions: [
+      'Go to account.microsoft.com/security',
+      'Click "Advanced security options"',
+      'Under "App passwords", click "Create a new app password"',
+      'Copy the password shown',
+    ],
+    helpUrl: 'https://support.microsoft.com/en-us/account-billing/using-app-passwords-with-apps-that-don-t-support-two-step-verification-5896ed9b-4263-e681-128a-a6f2979a7944',
+  },
+  other: {
+    name: 'Other Provider',
+    host: '',
+    port: 993,
+    instructions: [
+      'Find your email provider\'s IMAP settings',
+      'Generate an app-specific password if available',
+      'Enter the IMAP server hostname and port below',
+    ],
+    helpUrl: '',
+  },
+}
+
+type Step = 'provider' | 'instructions' | 'credentials' | 'testing' | 'success' | 'manage'
+
+export default function SetupWizard({ user, existingCredentials }: Props) {
+  const [step, setStep] = useState<Step>(existingCredentials ? 'manage' : 'provider')
+  const [provider, setProvider] = useState<Provider | null>(null)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [host, setHost] = useState('')
+  const [port, setPort] = useState(993)
+  const [error, setError] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState(false)
+
+  const handleProviderSelect = (p: Provider) => {
+    setProvider(p)
+    setHost(PROVIDERS[p].host)
+    setPort(PROVIDERS[p].port)
+    setStep('instructions')
+  }
+
+  const handleTestConnection = async () => {
+    if (!provider || !email || !password) return
+
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const response = await fetch('/api/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          email,
+          password, // Sent over HTTPS, encrypted at rest
+          host: host || PROVIDERS[provider].host,
+          port: port || PROVIDERS[provider].port,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.error || 'Connection test failed')
+        return
+      }
+
+      setStep('testing')
+    } catch {
+      setError('Failed to test connection. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!provider || !email || !password) return
+
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      // Get encryption key from server
+      const keyResponse = await fetch('/api/encryption-key')
+      if (!keyResponse.ok) {
+        throw new Error('Failed to get encryption key')
+      }
+      const { key } = await keyResponse.json()
+
+      // Encrypt password client-side
+      const { encrypted, iv } = await encryptPassword(password, key)
+
+      const response = await fetch('/api/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider,
+          email,
+          encryptedPassword: encrypted,
+          iv,
+          host: host || PROVIDERS[provider].host,
+          port: port || PROVIDERS[provider].port,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.error || 'Failed to save credentials')
+        return
+      }
+
+      setStep('success')
+    } catch {
+      setError('Failed to save credentials. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteConfirm) {
+      setDeleteConfirm(true)
+      return
+    }
+
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const response = await fetch('/api/delete', {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        setError(data.error || 'Failed to delete credentials')
+        return
+      }
+
+      // Reload page to reset state
+      window.location.reload()
+    } catch {
+      setError('Failed to delete credentials. Please try again.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Manage existing credentials
+  if (step === 'manage' && existingCredentials) {
+    return (
+      <div className="bg-card rounded-lg border border-border p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
+            <svg className="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="font-semibold">Email Sync Active</h2>
+            <p className="text-sm text-muted-foreground">
+              Syncing {existingCredentials.imapEmail} via {PROVIDERS[existingCredentials.provider as Provider]?.name || existingCredentials.provider}
+            </p>
+          </div>
+        </div>
+
+        {existingCredentials.lastSyncAt && (
+          <p className="text-sm text-muted-foreground mb-4">
+            Last synced: {new Date(existingCredentials.lastSyncAt * 1000).toLocaleString()}
+          </p>
+        )}
+
+        {error && (
+          <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md text-sm text-destructive mb-4">
+            {error}
+          </div>
+        )}
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setStep('provider')
+              setProvider(null)
+              setEmail('')
+              setPassword('')
+            }}
+            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+          >
+            Update Settings
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={isLoading}
+            className="px-4 py-2 bg-destructive text-destructive-foreground rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {isLoading ? 'Deleting...' : deleteConfirm ? 'Confirm Delete' : 'Delete My Data'}
+          </button>
+        </div>
+
+        {deleteConfirm && !isLoading && (
+          <p className="text-sm text-muted-foreground mt-2">
+            Click again to confirm. This will permanently delete your IMAP credentials.
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  // Provider selection
+  if (step === 'provider') {
+    return (
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h2 className="font-semibold mb-4">Select Your Email Provider</h2>
+        <div className="grid gap-3">
+          {(Object.entries(PROVIDERS) as [Provider, ProviderConfig][]).map(([key, config]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => handleProviderSelect(key)}
+              className="w-full p-4 text-left bg-secondary/50 hover:bg-secondary rounded-md transition-colors border border-transparent hover:border-border"
+            >
+              <span className="font-medium">{config.name}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // Instructions
+  if (step === 'instructions' && provider) {
+    const config = PROVIDERS[provider]
+    return (
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h2 className="font-semibold mb-4">Create an App Password for {config.name}</h2>
+        <div className="mb-6">
+          <p className="text-sm text-muted-foreground mb-4">
+            App passwords let you connect without using your main password. Follow these steps:
+          </p>
+          <ol className="list-decimal list-inside space-y-2 text-sm">
+            {config.instructions.map((instruction, i) => (
+              <li key={i}>{instruction}</li>
+            ))}
+          </ol>
+          {config.helpUrl && (
+            <a
+              href={config.helpUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block mt-4 text-sm text-primary hover:underline"
+            >
+              View official help guide →
+            </a>
+          )}
+        </div>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => setStep('provider')}
+            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+          >
+            Back
+          </button>
+          <button
+            type="button"
+            onClick={() => setStep('credentials')}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+          >
+            I Have My App Password
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Credentials form
+  if (step === 'credentials' && provider) {
+    const config = PROVIDERS[provider]
+    return (
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h2 className="font-semibold mb-4">Enter Your Credentials</h2>
+
+        {error && (
+          <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md text-sm text-destructive mb-4">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={(e) => { e.preventDefault(); handleTestConnection(); }} className="space-y-4">
+          <div>
+            <label htmlFor="email" className="block text-sm font-medium mb-1">
+              Email Address
+            </label>
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="your@email.com"
+              required
+              className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium mb-1">
+              App Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="App-specific password"
+              required
+              className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              This is the app password you generated, not your main password
+            </p>
+          </div>
+
+          {provider === 'other' && (
+            <>
+              <div>
+                <label htmlFor="host" className="block text-sm font-medium mb-1">
+                  IMAP Server
+                </label>
+                <input
+                  id="host"
+                  type="text"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  placeholder="imap.example.com"
+                  required
+                  className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+
+              <div>
+                <label htmlFor="port" className="block text-sm font-medium mb-1">
+                  Port
+                </label>
+                <input
+                  id="port"
+                  type="number"
+                  value={port}
+                  onChange={(e) => setPort(Number(e.target.value))}
+                  placeholder="993"
+                  required
+                  className="w-full px-3 py-2 bg-background border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </>
+          )}
+
+          {provider !== 'other' && (
+            <p className="text-xs text-muted-foreground">
+              Connecting to {config.host}:{config.port}
+            </p>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => setStep('instructions')}
+              className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+            >
+              Back
+            </button>
+            <button
+              type="submit"
+              disabled={isLoading || !email || !password}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {isLoading ? 'Testing...' : 'Test Connection'}
+            </button>
+          </div>
+        </form>
+      </div>
+    )
+  }
+
+  // Testing successful, confirm save
+  if (step === 'testing') {
+    return (
+      <div className="bg-card rounded-lg border border-border p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
+            <svg className="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="font-semibold">Connection Successful!</h2>
+            <p className="text-sm text-muted-foreground">We can connect to your email</p>
+          </div>
+        </div>
+
+        {error && (
+          <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md text-sm text-destructive mb-4">
+            {error}
+          </div>
+        )}
+
+        <p className="text-sm text-muted-foreground mb-4">
+          Ready to save your credentials and start syncing ticket confirmations?
+        </p>
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => setStep('credentials')}
+            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+          >
+            Back
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isLoading}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {isLoading ? 'Saving...' : 'Save & Start Syncing'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Success
+  if (step === 'success') {
+    return (
+      <div className="bg-card rounded-lg border border-border p-6 text-center">
+        <div className="w-16 h-16 rounded-full bg-success/20 flex items-center justify-center mx-auto mb-4">
+          <svg className="w-8 h-8 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <h2 className="font-semibold text-xl mb-2">You're All Set!</h2>
+        <p className="text-muted-foreground mb-6">
+          We'll check your inbox every 15 minutes for ticket confirmations and add them to your areyougo.ing timeline.
+        </p>
+        <a
+          href="https://areyougo.ing/dashboard"
+          className="inline-flex items-center justify-center px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+        >
+          Go to Dashboard
+        </a>
+      </div>
+    )
+  }
+
+  return null
+}

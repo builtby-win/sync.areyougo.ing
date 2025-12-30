@@ -1,0 +1,80 @@
+---
+import BaseLayout from '../layouts/base-layout.astro'
+import SetupWizard from '../components/setup-wizard'
+import { verifySession } from '../lib/verify-session'
+import { getDb } from '../lib/db'
+import { imapCredentials } from '../lib/schema'
+import { eq } from 'drizzle-orm'
+
+// Get environment and verify session
+const env = Astro.locals.runtime.env
+const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
+const user = await verifySession(Astro.request, mainAppUrl)
+
+// Check if user already has credentials set up
+let existingCredentials = null
+if (user) {
+  const db = getDb(env)
+  const result = await db
+    .select({
+      provider: imapCredentials.provider,
+      imapEmail: imapCredentials.imapEmail,
+      lastSyncAt: imapCredentials.lastSyncAt,
+    })
+    .from(imapCredentials)
+    .where(eq(imapCredentials.userId, user.id))
+    .limit(1)
+
+  if (result.length > 0) {
+    existingCredentials = result[0]
+  }
+}
+---
+
+<BaseLayout>
+  <div class="min-h-[80vh] flex flex-col items-center justify-center px-4 py-12">
+    <div class="w-full max-w-lg">
+      <!-- Header -->
+      <div class="text-center mb-8">
+        <h1 class="text-3xl font-bold mb-2">Email Sync Setup</h1>
+        <p class="text-muted-foreground">
+          Connect your email to automatically import ticket confirmations
+        </p>
+      </div>
+
+      {!user ? (
+        <!-- Not logged in -->
+        <div class="bg-card rounded-lg border border-border p-6 text-center">
+          <p class="text-muted-foreground mb-4">
+            Please sign in to areyougo.ing first to set up email sync.
+          </p>
+          <a
+            href={`${mainAppUrl}/dashboard`}
+            class="inline-flex items-center justify-center px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+          >
+            Sign in to areyougo.ing
+          </a>
+        </div>
+      ) : (
+        <!-- Logged in - show setup wizard -->
+        <SetupWizard
+          client:load
+          user={{ id: user.id, email: user.email, name: user.name }}
+          existingCredentials={existingCredentials}
+        />
+      )}
+
+      <!-- Transparency Notice -->
+      <div class="mt-8 p-4 bg-card/50 rounded-lg border border-border">
+        <h3 class="font-semibold mb-2 text-sm">Privacy & Transparency</h3>
+        <ul class="text-sm text-muted-foreground space-y-1">
+          <li>• Your password is encrypted and never logged</li>
+          <li>• We only read emails from <a href="https://github.com/snoolord/sync.areyougo.ing/blob/main/src/lib/approved-senders.ts" target="_blank" class="text-primary hover:underline">approved ticket vendors</a></li>
+          <li>• Use an app-specific password (not your main password)</li>
+          <li>• You can delete your data anytime</li>
+          <li>• This code is <a href="https://github.com/snoolord/sync.areyougo.ing" target="_blank" class="text-primary hover:underline">open source</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</BaseLayout>

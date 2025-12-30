@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# generated types
+.astro/
+
+# environment variables
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# wrangler
+.wrangler/
+
+# editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# logs
+*.log

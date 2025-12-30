@@ -1,0 +1,73 @@
+---
+import '../styles/global.css'
+
+interface Props {
+  title?: string
+  description?: string
+}
+
+const {
+  title = 'Email Sync - areyougo.ing',
+  description = 'Securely sync your ticket confirmation emails with areyougo.ing',
+} = Astro.props
+
+const commit = import.meta.env.PUBLIC_GIT_COMMIT || 'local'
+const commitShort = commit.slice(0, 7)
+const repoUrl = 'https://github.com/snoolord/sync.areyougo.ing'
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Primary Meta Tags -->
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="robots" content="noindex" />
+
+    <meta name="generator" content={Astro.generator} />
+  </head>
+  <body class="min-h-screen flex flex-col antialiased">
+    <main class="flex-1">
+      <slot />
+    </main>
+
+    <!-- Transparency Footer -->
+    <footer class="border-t border-border py-4 px-6">
+      <div class="max-w-2xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-sm text-muted-foreground">
+        <div>
+          Running commit <a
+            href={`${repoUrl}/commit/${commit}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="font-mono text-primary hover:underline"
+          >{commitShort}</a>
+        </div>
+        <div class="flex items-center gap-4">
+          <a
+            href={repoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="hover:text-foreground transition-colors"
+          >
+            View source on GitHub
+          </a>
+          <a
+            href="https://areyougo.ing"
+            class="hover:text-foreground transition-colors"
+          >
+            areyougo.ing
+          </a>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
