@@ -127,7 +127,12 @@ async function testConnectionImpl(
     // For STARTTLS, upgrade after connecting; for implicit TLS, already secure
     logWithTime(startTime, useImplicitTls ? 'Using socket directly (implicit TLS)' : 'Calling startTls()...')
     const secureSocket = useImplicitTls ? socket : socket.startTls()
-    logWithTime(startTime, 'Secure socket ready')
+    logWithTime(startTime, 'Secure socket object ready')
+
+    // Wait for the TCP/TLS connection to actually be established
+    logWithTime(startTime, 'Awaiting socket.opened promise...')
+    await secureSocket.opened
+    logWithTime(startTime, 'Socket connection established!')
 
     logWithTime(startTime, 'Getting readable stream...')
     const readableReader = secureSocket.readable.getReader()
@@ -215,7 +220,12 @@ export async function fetchTicketEmails(
 
     logWithTime(startTime, useImplicitTls ? 'Using socket directly (implicit TLS)' : 'Calling startTls()...')
     const secureSocket = useImplicitTls ? socket : socket.startTls()
-    logWithTime(startTime, 'Secure socket ready')
+    logWithTime(startTime, 'Secure socket object ready')
+
+    // Wait for the TCP/TLS connection to actually be established
+    logWithTime(startTime, 'Awaiting socket.opened promise...')
+    await secureSocket.opened
+    logWithTime(startTime, 'Socket connection established!')
 
     logWithTime(startTime, 'Getting streams...')
     const reader = new ImapReader(secureSocket.readable.getReader())
@@ -435,7 +445,12 @@ async function fetchSampleEmailsImpl(
 
     logWithTime(startTime, useImplicitTls ? 'Using socket directly (implicit TLS)' : 'Calling startTls()...')
     const secureSocket = useImplicitTls ? socket : socket.startTls()
-    logWithTime(startTime, 'Secure socket ready')
+    logWithTime(startTime, 'Secure socket object ready')
+
+    // Wait for the TCP/TLS connection to actually be established
+    logWithTime(startTime, 'Awaiting socket.opened promise...')
+    await secureSocket.opened
+    logWithTime(startTime, 'Socket connection established!')
 
     logWithTime(startTime, 'Getting readable stream...')
     const readableReader = secureSocket.readable.getReader()
