@@ -8,8 +8,7 @@ import { imapCredentials } from '../lib/schema'
 import { eq } from 'drizzle-orm'
 
 // Get environment and verify session
-const env = Astro.locals.runtime.env
-const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
+const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
 const user = await verifySession(Astro.request, mainAppUrl)
 
 // Check if user already has credentials set up
@@ -22,7 +21,7 @@ let existingCredentials: {
 } | null = null
 
 if (user) {
-  const db = getDb(env)
+  const db = getDb()
   const result = await db
     .select({
       provider: imapCredentials.provider,

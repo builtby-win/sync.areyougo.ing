@@ -1,9 +1,9 @@
 import type { APIRoute } from 'astro'
 import { eq } from 'drizzle-orm'
-import { verifySession } from '../../lib/verify-session'
 import { getDb } from '../../lib/db'
-import { imapCredentials, syncHistory } from '../../lib/schema'
 import { fetchTicketEmails } from '../../lib/imap-client'
+import { imapCredentials, syncHistory } from '../../lib/schema'
+import { verifySession } from '../../lib/verify-session'
 
 interface SyncRequest {
   lookbackDays: number
@@ -29,12 +29,21 @@ interface SyncResponse {
 
 const RATE_LIMIT_HOURS = 24
 
-export const POST: APIRoute = async ({ request, locals }) => {
+export const POST: APIRoute = async ({ request }) => {
   console.log('[sync] POST request received')
   const startTime = Date.now()
 
-  const env = locals.runtime.env
-  const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
+  const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
+  const encryptionKey = process.env.ENCRYPTION_KEY
+  const ingestApiKey = process.env.INGEST_API_KEY
+
+  if (!encryptionKey) {
+    console.error('[sync] ENCRYPTION_KEY not configured')
+    return new Response(
+      JSON.stringify({ success: false, error: 'Server configuration error' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
 
   try {
     // Verify user is authenticated
@@ -60,7 +69,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       )
     }
 
-    const db = getDb(env)
+    const db = getDb()
 
     // Get user's IMAP credentials
     const creds = await db
@@ -112,7 +121,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         iv: cred.iv,
         lastSyncAt: cred.lastSyncAt,
       },
-      env.ENCRYPTION_KEY,
+      encryptionKey,
       { lookbackDays }
     )
 
@@ -150,7 +159,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(env.INGEST_API_KEY && { 'X-API-Key': env.INGEST_API_KEY }),
+            ...(ingestApiKey && { 'X-API-Key': ingestApiKey }),
           },
           body: JSON.stringify({
             userId: cred.userId,

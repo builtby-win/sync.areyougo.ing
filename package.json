@@ -4,17 +4,13 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "postinstall": "wrangler types",
-    "dev": "wrangler types && astro build && concurrently \"wrangler pages dev dist --port 5432\" \"astro build --watch\"",
+    "dev": "astro dev",
     "build": "astro build",
-    "preview": "wrangler pages dev dist",
-    "deploy": "astro build && wrangler pages deploy dist --project-name sync-areyougoing",
-    "production-deploy": "pnpm migrate:remote && npx wrangler deploy",
+    "start": "node dist/server/entry.mjs",
+    "start:prod": "tsx scripts/start-with-cron.ts",
     "astro": "astro",
     "generate": "drizzle-kit generate --config drizzle.config.ts",
-    "migrate": "wrangler d1 migrations apply DB --local",
-    "migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "cf-typegen": "wrangler types",
+    "migrate": "tsx scripts/migrate.ts",
     "typecheck": "astro check && tsc --noEmit",
     "format": "biome format --write .",
     "lint": "biome lint .",
@@ -22,7 +18,7 @@
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
-    "@astrojs/cloudflare": "^12.5.1",
+    "@astrojs/node": "^9.0.0",
     "@astrojs/react": "^4.2.1",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-label": "^2.1.7",
@@ -31,10 +27,13 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "astro": "^5.16.6",
+    "better-sqlite3": "^11.7.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "^0.44.2",
+    "imapflow": "^1.0.171",
     "lucide-react": "^0.552.0",
+    "node-cron": "^3.0.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwind-merge": "^3.3.1",
@@ -45,10 +44,16 @@
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
     "@builtby.win/configs": "^1.0.0",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^24.0.7",
+    "@types/node-cron": "^3.0.11",
     "concurrently": "^9.1.2",
     "drizzle-kit": "^0.31.4",
-    "tsx": "^4.20.3",
-    "wrangler": "^4.13.2"
+    "tsx": "^4.20.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }

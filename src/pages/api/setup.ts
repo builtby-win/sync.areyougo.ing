@@ -1,8 +1,8 @@
 import type { APIRoute } from 'astro'
-import { verifySession } from '../../lib/verify-session'
+import { eq } from 'drizzle-orm'
 import { getDb } from '../../lib/db'
 import { imapCredentials } from '../../lib/schema'
-import { eq } from 'drizzle-orm'
+import { verifySession } from '../../lib/verify-session'
 
 interface SetupRequest {
   provider: string
@@ -14,12 +14,11 @@ interface SetupRequest {
   syncMode?: 'manual' | 'auto_daily'
 }
 
-export const POST: APIRoute = async ({ request, locals }) => {
+export const POST: APIRoute = async ({ request }) => {
   console.log('[setup] POST request received')
   const startTime = Date.now()
 
-  const env = locals.runtime.env
-  const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
+  const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
 
   try {
     // Verify user is authenticated
@@ -48,7 +47,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     console.log('[setup] Saving credentials for:', { provider, email, host, port, syncMode })
 
-    const db = getDb(env)
+    const db = getDb()
 
     // Check if user already has credentials
     const existing = await db

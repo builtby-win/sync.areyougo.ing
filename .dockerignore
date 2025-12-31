@@ -1,0 +1,33 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+
+# Development files
+.git
+.gitignore
+*.md
+.env*
+!.env.example
+
+# IDE
+.vscode
+.idea
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Cloudflare (deprecated)
+.wrangler
+wrangler.jsonc
+worker-configuration.d.ts
+
+# Test files
+*.test.ts
+*.spec.ts
+__tests__
+
+# Data (will be mounted as volume)
+data

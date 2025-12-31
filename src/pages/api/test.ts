@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro'
-import { verifySession } from '../../lib/verify-session'
 import { fetchSampleEmails, type EmailPreview } from '../../lib/imap-client'
+import { verifySession } from '../../lib/verify-session'
 
 interface TestRequest {
   provider: string
@@ -17,12 +17,11 @@ interface TestResponse {
   sampleEmails?: EmailPreview[]
 }
 
-export const POST: APIRoute = async ({ request, locals }) => {
+export const POST: APIRoute = async ({ request }) => {
   console.log('[test] POST request received')
   const startTime = Date.now()
 
-  const env = locals.runtime.env
-  const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
+  const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
 
   try {
     // Verify user is authenticated

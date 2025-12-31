@@ -1,8 +1,8 @@
 import type { APIRoute } from 'astro'
 import { eq } from 'drizzle-orm'
-import { verifySession } from '../../lib/verify-session'
 import { getDb } from '../../lib/db'
 import { imapCredentials } from '../../lib/schema'
+import { verifySession } from '../../lib/verify-session'
 
 type SyncMode = 'manual' | 'auto_daily'
 
@@ -23,11 +23,10 @@ interface SettingsResponse {
 }
 
 // GET - Fetch current settings
-export const GET: APIRoute = async ({ request, locals }) => {
+export const GET: APIRoute = async ({ request }) => {
   console.log('[settings] GET request received')
 
-  const env = locals.runtime.env
-  const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
+  const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
 
   try {
     const user = await verifySession(request, mainAppUrl)
@@ -38,7 +37,7 @@ export const GET: APIRoute = async ({ request, locals }) => {
       })
     }
 
-    const db = getDb(env)
+    const db = getDb()
 
     const creds = await db
       .select()
@@ -81,11 +80,10 @@ export const GET: APIRoute = async ({ request, locals }) => {
 }
 
 // PATCH - Update settings
-export const PATCH: APIRoute = async ({ request, locals }) => {
+export const PATCH: APIRoute = async ({ request }) => {
   console.log('[settings] PATCH request received')
 
-  const env = locals.runtime.env
-  const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
+  const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
 
   try {
     const user = await verifySession(request, mainAppUrl)
@@ -107,7 +105,7 @@ export const PATCH: APIRoute = async ({ request, locals }) => {
       )
     }
 
-    const db = getDb(env)
+    const db = getDb()
 
     // Check if user has credentials
     const existing = await db

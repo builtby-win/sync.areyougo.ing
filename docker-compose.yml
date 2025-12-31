@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  sync-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "4321:4321"
+    environment:
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - MAIN_APP_URL=${MAIN_APP_URL:-https://areyougo.ing}
+      - INGEST_API_KEY=${INGEST_API_KEY:-}
+      - DATABASE_PATH=/app/data/sync.db
+      - CRON_SCHEDULE=${CRON_SCHEDULE:-0 6 * * *}
+    volumes:
+      - sync-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4321/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  sync-data:
+    driver: local

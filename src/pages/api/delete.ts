@@ -1,15 +1,14 @@
 import type { APIRoute } from 'astro'
-import { verifySession } from '../../lib/verify-session'
+import { eq } from 'drizzle-orm'
 import { getDb } from '../../lib/db'
 import { imapCredentials, syncHistory } from '../../lib/schema'
-import { eq } from 'drizzle-orm'
+import { verifySession } from '../../lib/verify-session'
 
-export const DELETE: APIRoute = async ({ request, locals }) => {
+export const DELETE: APIRoute = async ({ request }) => {
   console.log('[delete] DELETE request received')
   const startTime = Date.now()
 
-  const env = locals.runtime.env
-  const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
+  const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
 
   try {
     // Verify user is authenticated
@@ -24,7 +23,7 @@ export const DELETE: APIRoute = async ({ request, locals }) => {
 
     console.log('[delete] User verified:', user.id)
 
-    const db = getDb(env)
+    const db = getDb()
 
     // Delete IMAP credentials
     const result = await db
