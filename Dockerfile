@@ -42,6 +42,7 @@ RUN pnpm rebuild better-sqlite3
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/drizzle ./drizzle
 COPY --from=builder /app/scripts ./scripts
+COPY --from=builder /app/src ./src
 
 # Create data directory for SQLite
 RUN mkdir -p /app/data
