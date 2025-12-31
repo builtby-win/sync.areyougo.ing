@@ -7,6 +7,14 @@ import { connect } from 'cloudflare:sockets'
 import { APPROVED_SENDERS, isApprovedSender } from './approved-senders'
 import { decryptPassword } from './encryption'
 
+/**
+ * Helper for timestamped logging to debug connection issues
+ */
+const logWithTime = (startTime: number, msg: string) => {
+  const elapsed = Date.now() - startTime
+  console.log(`[imap-client] [+${elapsed}ms] ${msg}`)
+}
+
 interface ImapCredentials {
   host: string
   port: number
@@ -87,9 +95,9 @@ export async function testConnection(
 ): Promise<{ success: boolean; error?: string }> {
   console.log(`[imap-client] Connecting to ${credentials.host}:${credentials.port}...`)
 
-  // Add timeout for local dev where cloudflare:sockets may not work
+  // Add timeout - 5 minutes for production debugging
   const timeoutPromise = new Promise<{ success: false; error: string }>((resolve) =>
-    setTimeout(() => resolve({ success: false, error: 'Connection timed out. TCP sockets may not work in local development - try deploying to Cloudflare.' }), 15000)
+    setTimeout(() => resolve({ success: false, error: 'Connection timed out after 5 minutes.' }), 300000)
   )
 
   const testPromise = testConnectionImpl(credentials)
@@ -100,57 +108,75 @@ export async function testConnection(
 async function testConnectionImpl(
   credentials: Omit<ImapCredentials, 'lastSyncAt'> & { password: string }
 ): Promise<{ success: boolean; error?: string }> {
+  const startTime = Date.now()
+
   try {
     // Port 993 uses implicit TLS (connect with TLS immediately)
     // Port 143 would use STARTTLS (upgrade plaintext to TLS)
     const useImplicitTls = credentials.port === 993
+    logWithTime(startTime, `Using ${useImplicitTls ? 'implicit TLS (port 993)' : 'STARTTLS (port 143)'}`)
 
+    logWithTime(startTime, 'Calling cloudflare:sockets connect()...')
     const socket = connect({
       hostname: credentials.host,
       port: credentials.port,
       secureTransport: useImplicitTls ? 'on' : 'starttls',
     })
+    logWithTime(startTime, 'Socket object created')
 
     // For STARTTLS, upgrade after connecting; for implicit TLS, already secure
+    logWithTime(startTime, useImplicitTls ? 'Using socket directly (implicit TLS)' : 'Calling startTls()...')
     const secureSocket = useImplicitTls ? socket : socket.startTls()
-    console.log('[imap-client] TLS connection established')
+    logWithTime(startTime, 'Secure socket ready')
 
-    const reader = new ImapReader(secureSocket.readable.getReader())
+    logWithTime(startTime, 'Getting readable stream...')
+    const readableReader = secureSocket.readable.getReader()
+    logWithTime(startTime, 'Got readable stream reader')
+
+    logWithTime(startTime, 'Getting writable stream...')
     const writer = secureSocket.writable.getWriter()
+    logWithTime(startTime, 'Got writable stream writer')
+
+    const reader = new ImapReader(readableReader)
 
     // Read greeting
+    logWithTime(startTime, 'Waiting for server greeting...')
     const greeting = await reader.readLine()
-    console.log('[imap-client] Server greeting received')
+    logWithTime(startTime, `Server greeting received: ${greeting.substring(0, 50)}...`)
 
     if (!greeting.startsWith('* OK')) {
+      logWithTime(startTime, `ERROR: Unexpected greeting: ${greeting}`)
       return { success: false, error: 'Unexpected server greeting' }
     }
 
     // Login
-    console.log('[imap-client] Logging in...')
+    logWithTime(startTime, 'Sending LOGIN command...')
     const loginResponse = await sendCommand(
       writer,
       reader,
       'A001',
       `LOGIN "${credentials.email}" "${credentials.password}"`
     )
+    logWithTime(startTime, 'LOGIN response received')
 
     const loginResult = loginResponse[loginResponse.length - 1]
     if (!loginResult.includes('OK')) {
-      console.log('[imap-client] Login failed:', loginResult)
+      logWithTime(startTime, `Login failed: ${loginResult}`)
       return { success: false, error: 'Invalid credentials' }
     }
-    console.log('[imap-client] Login successful')
+    logWithTime(startTime, 'Login successful')
 
     // Logout
+    logWithTime(startTime, 'Sending LOGOUT...')
     await sendCommand(writer, reader, 'A002', 'LOGOUT')
 
     await writer.close()
-    console.log('[imap-client] Connection test complete')
+    logWithTime(startTime, 'Connection test complete - SUCCESS')
 
     return { success: true }
   } catch (error) {
-    console.error('[imap-client] Connection error:', error)
+    logWithTime(startTime, `ERROR: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    console.error('[imap-client] Full error:', error)
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Connection failed',
@@ -166,54 +192,73 @@ export async function fetchTicketEmails(
   encryptionKey: string,
   options?: FetchOptions
 ): Promise<Email[]> {
-  console.log('[imap-client] Fetching emails from:', credentials.host)
+  const startTime = Date.now()
+  logWithTime(startTime, `Fetching emails from: ${credentials.host}:${credentials.port}`)
 
+  logWithTime(startTime, 'Decrypting password...')
   const password = await decryptPassword(credentials.encryptedPassword, credentials.iv, encryptionKey)
+  logWithTime(startTime, 'Password decrypted')
 
   try {
     // Port 993 uses implicit TLS (connect with TLS immediately)
     // Port 143 would use STARTTLS (upgrade plaintext to TLS)
     const useImplicitTls = credentials.port === 993
+    logWithTime(startTime, `Using ${useImplicitTls ? 'implicit TLS (port 993)' : 'STARTTLS (port 143)'}`)
 
+    logWithTime(startTime, 'Calling cloudflare:sockets connect()...')
     const socket = connect({
       hostname: credentials.host,
       port: credentials.port,
       secureTransport: useImplicitTls ? 'on' : 'starttls',
     })
+    logWithTime(startTime, 'Socket object created')
 
+    logWithTime(startTime, useImplicitTls ? 'Using socket directly (implicit TLS)' : 'Calling startTls()...')
     const secureSocket = useImplicitTls ? socket : socket.startTls()
+    logWithTime(startTime, 'Secure socket ready')
 
+    logWithTime(startTime, 'Getting streams...')
     const reader = new ImapReader(secureSocket.readable.getReader())
     const writer = secureSocket.writable.getWriter()
+    logWithTime(startTime, 'Streams ready')
 
     // Read greeting
-    await reader.readLine()
+    logWithTime(startTime, 'Waiting for server greeting...')
+    const greeting = await reader.readLine()
+    logWithTime(startTime, `Server greeting received: ${greeting.substring(0, 50)}...`)
 
     // Login
+    logWithTime(startTime, 'Sending LOGIN command...')
     const loginResponse = await sendCommand(
       writer,
       reader,
       'A001',
       `LOGIN "${credentials.email}" "${password}"`
     )
+    logWithTime(startTime, 'LOGIN response received')
 
     if (!loginResponse[loginResponse.length - 1].includes('OK')) {
+      logWithTime(startTime, 'Login failed')
       throw new Error('Login failed')
     }
+    logWithTime(startTime, 'Login successful')
 
     // Select INBOX
+    logWithTime(startTime, 'Selecting INBOX...')
     const selectResponse = await sendCommand(writer, reader, 'A002', 'SELECT INBOX')
-    console.log('[imap-client] Selected INBOX:', selectResponse.length, 'lines')
+    logWithTime(startTime, `Selected INBOX: ${selectResponse.length} lines`)
 
     // Build search criteria - use lookbackDays if specified, otherwise lastSyncAt
     let sinceDate: string
     if (options?.lookbackDays) {
       sinceDate = formatImapDate(new Date(Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000))
-      console.log(`[imap-client] Using lookback of ${options.lookbackDays} days`)
+      logWithTime(startTime, `Using lookback of ${options.lookbackDays} days (since ${sinceDate})`)
     } else if (credentials.lastSyncAt) {
       sinceDate = formatImapDate(credentials.lastSyncAt)
+      logWithTime(startTime, `Using lastSyncAt: ${sinceDate}`)
     } else {
       sinceDate = formatImapDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)) // Default: last 30 days
+      logWithTime(startTime, `Using default 30 day lookback: ${sinceDate}`)
     }
 
     // Search for emails from approved senders
@@ -237,7 +282,9 @@ export async function fetchTicketEmails(
         .split(' ')
         .filter((id) => id)
 
-      console.log(`[imap-client] Found ${messageIds.length} emails from ${sender}`)
+      if (messageIds.length > 0) {
+        logWithTime(startTime, `Found ${messageIds.length} emails from ${sender}`)
+      }
 
       // Fetch each email
       for (const msgId of messageIds.slice(0, 10)) {
@@ -248,19 +295,21 @@ export async function fetchTicketEmails(
             emails.push(email)
           }
         } catch (error) {
-          console.error(`[imap-client] Error fetching message ${msgId}:`, error)
+          logWithTime(startTime, `Error fetching message ${msgId}: ${error}`)
         }
       }
     }
 
     // Logout
+    logWithTime(startTime, 'Logging out...')
     await sendCommand(writer, reader, 'A999', 'LOGOUT')
     await writer.close()
 
-    console.log(`[imap-client] Fetched ${emails.length} total emails`)
+    logWithTime(startTime, `Complete - fetched ${emails.length} total emails`)
     return emails
   } catch (error) {
-    console.error('[imap-client] Fetch error:', error)
+    logWithTime(startTime, `ERROR: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    console.error('[imap-client] Full error:', error)
     throw error
   }
 }
@@ -354,9 +403,9 @@ export async function fetchSampleEmails(
 ): Promise<{ success: boolean; emails?: EmailPreview[]; error?: string }> {
   console.log(`[imap-client] Connecting to ${credentials.host}:${credentials.port}...`)
 
-  // Add timeout for local dev where cloudflare:sockets may not work
+  // Add timeout - 5 minutes for production debugging
   const timeoutPromise = new Promise<{ success: false; error: string }>((resolve) =>
-    setTimeout(() => resolve({ success: false, error: 'Connection timed out. TCP sockets may not work in local development - try deploying to Cloudflare.' }), 15000)
+    setTimeout(() => resolve({ success: false, error: 'Connection timed out after 5 minutes.' }), 300000)
   )
 
   const fetchPromise = fetchSampleEmailsImpl(credentials, maxEmails)
@@ -368,56 +417,78 @@ async function fetchSampleEmailsImpl(
   credentials: Omit<ImapCredentials, 'lastSyncAt'> & { password: string },
   maxEmails: number
 ): Promise<{ success: boolean; emails?: EmailPreview[]; error?: string }> {
+  const startTime = Date.now()
+
   try {
     // Port 993 uses implicit TLS (connect with TLS immediately)
     // Port 143 would use STARTTLS (upgrade plaintext to TLS)
     const useImplicitTls = credentials.port === 993
+    logWithTime(startTime, `Using ${useImplicitTls ? 'implicit TLS (port 993)' : 'STARTTLS (port 143)'}`)
 
+    logWithTime(startTime, 'Calling cloudflare:sockets connect()...')
     const socket = connect({
       hostname: credentials.host,
       port: credentials.port,
       secureTransport: useImplicitTls ? 'on' : 'starttls',
     })
+    logWithTime(startTime, 'Socket object created')
 
+    logWithTime(startTime, useImplicitTls ? 'Using socket directly (implicit TLS)' : 'Calling startTls()...')
     const secureSocket = useImplicitTls ? socket : socket.startTls()
+    logWithTime(startTime, 'Secure socket ready')
 
-    const reader = new ImapReader(secureSocket.readable.getReader())
+    logWithTime(startTime, 'Getting readable stream...')
+    const readableReader = secureSocket.readable.getReader()
+    logWithTime(startTime, 'Got readable stream reader')
+
+    logWithTime(startTime, 'Getting writable stream...')
     const writer = secureSocket.writable.getWriter()
+    logWithTime(startTime, 'Got writable stream writer')
+
+    const reader = new ImapReader(readableReader)
 
     // Read greeting
+    logWithTime(startTime, 'Waiting for server greeting...')
     const greeting = await reader.readLine()
-    console.log('[imap-client] Server greeting received')
+    logWithTime(startTime, `Server greeting received: ${greeting.substring(0, 50)}...`)
+
     if (!greeting.startsWith('* OK')) {
+      logWithTime(startTime, `ERROR: Unexpected greeting: ${greeting}`)
       return { success: false, error: 'Unexpected server greeting' }
     }
 
     // Login
-    console.log('[imap-client] Logging in...')
+    logWithTime(startTime, 'Sending LOGIN command...')
     const loginResponse = await sendCommand(
       writer,
       reader,
       'A001',
       `LOGIN "${credentials.email}" "${credentials.password}"`
     )
+    logWithTime(startTime, 'LOGIN response received')
 
     if (!loginResponse[loginResponse.length - 1].includes('OK')) {
+      logWithTime(startTime, 'Login failed - invalid credentials')
       return { success: false, error: 'Invalid credentials' }
     }
-    console.log('[imap-client] Login successful')
+    logWithTime(startTime, 'Login successful')
 
     // Select INBOX and get message count
-    console.log('[imap-client] Selecting INBOX...')
+    logWithTime(startTime, 'Selecting INBOX...')
     const selectResponse = await sendCommand(writer, reader, 'A002', 'SELECT INBOX')
+    logWithTime(startTime, 'INBOX selected')
 
     // Parse message count from "* 1234 EXISTS" line
     const existsLine = selectResponse.find((line) => line.includes(' EXISTS'))
     const messageCount = existsLine ? parseInt(existsLine.replace('* ', '').replace(' EXISTS', ''), 10) : 0
 
-    console.log(`[imap-client] Found ${messageCount} total messages in INBOX`)
+    logWithTime(startTime, `Found ${messageCount} total messages in INBOX`)
 
     if (messageCount === 0) {
+      logWithTime(startTime, 'No messages, logging out...')
       await sendCommand(writer, reader, 'A999', 'LOGOUT')
       await writer.close()
+      logWithTime(startTime, 'Complete - no emails found')
       return { success: true, emails: [] }
     }
 
@@ -426,7 +497,7 @@ async function fetchSampleEmailsImpl(
     const startMsg = Math.max(1, messageCount - fetchCount + 1)
     const endMsg = messageCount
 
-    console.log(`[imap-client] Fetching headers for messages ${startMsg}:${endMsg}...`)
+    logWithTime(startTime, `Fetching headers for messages ${startMsg}:${endMsg}...`)
 
     const fetchResponse = await sendCommand(
       writer,
@@ -477,22 +548,25 @@ async function fetchSampleEmailsImpl(
       }
     }
 
-    console.log(`[imap-client] Parsed ${allEmails.length} email headers`)
+    logWithTime(startTime, `Parsed ${allEmails.length} email headers`)
 
     // Filter for approved senders
-    console.log('[imap-client] Filtering for ticket vendors...')
+    logWithTime(startTime, 'Filtering for ticket vendors...')
     const ticketEmails = allEmails.filter((email) => isApprovedSender(email.from))
 
-    console.log(`[imap-client] Found ${ticketEmails.length} ticket emails from approved senders`)
+    logWithTime(startTime, `Found ${ticketEmails.length} ticket emails from approved senders`)
 
     // Logout
+    logWithTime(startTime, 'Logging out...')
     await sendCommand(writer, reader, 'A999', 'LOGOUT')
     await writer.close()
 
+    logWithTime(startTime, 'Complete - SUCCESS')
     // Return up to maxEmails
     return { success: true, emails: ticketEmails.slice(0, maxEmails) }
   } catch (error) {
-    console.error('[imap-client] Sample fetch error:', error)
+    logWithTime(startTime, `ERROR: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    console.error('[imap-client] Full error:', error)
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Connection failed',

@@ -1,0 +1,8 @@
+{
+  "enabledPlugins": {
+    "done@builtby-win-skills": true,
+    "pr@builtby-win-skills": true,
+    "ship@builtby-win-skills": true,
+    "work@builtby-win-skills": true
+  }
+}
