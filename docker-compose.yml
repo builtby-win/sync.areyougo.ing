@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   sync-server:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "4321:4321"
+      - "5432:4321"
     environment:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - MAIN_APP_URL=${MAIN_APP_URL:-https://areyougo.ing}

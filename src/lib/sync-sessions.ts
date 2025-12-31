@@ -8,6 +8,8 @@ export interface SyncEmail {
   ingestError?: string
 }
 
+export type ConnectionState = 'connecting' | 'authenticating' | 'connected' | 'error'
+
 export interface SyncSession {
   id: string
   userId: string
@@ -18,12 +20,19 @@ export interface SyncSession {
   startedAt: Date
   completedAt?: Date
   error?: string
+  // Progressive fetch tracking
+  currentSender?: string
+  sendersCompleted: string[]
+  sendersTotal: number
+  // Connection state tracking
+  connectionState?: ConnectionState
+  connectionError?: string
 }
 
 // In-memory store (simple Map, cleared on restart)
 const sessions = new Map<string, SyncSession>()
 
-export function createSession(userId: string): string {
+export function createSession(userId: string, sendersTotal: number): string {
   const sessionId = `sync_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
   sessions.set(sessionId, {
     id: sessionId,
@@ -33,6 +42,8 @@ export function createSession(userId: string): string {
     totalFound: 0,
     totalIngested: 0,
     startedAt: new Date(),
+    sendersCompleted: [],
+    sendersTotal,
   })
   return sessionId
 }
@@ -45,6 +56,34 @@ export function updateSession(sessionId: string, updates: Partial<SyncSession>):
   const session = sessions.get(sessionId)
   if (session) {
     Object.assign(session, updates)
+  }
+}
+
+export function updateCurrentSender(sessionId: string, sender: string | undefined): void {
+  const session = sessions.get(sessionId)
+  if (session) {
+    session.currentSender = sender
+  }
+}
+
+export function markSenderCompleted(sessionId: string, sender: string): void {
+  const session = sessions.get(sessionId)
+  if (session && !session.sendersCompleted.includes(sender)) {
+    session.sendersCompleted.push(sender)
+  }
+}
+
+export function updateConnectionState(
+  sessionId: string,
+  state: ConnectionState,
+  error?: string
+): void {
+  const session = sessions.get(sessionId)
+  if (session) {
+    session.connectionState = state
+    if (error) {
+      session.connectionError = error
+    }
   }
 }
 

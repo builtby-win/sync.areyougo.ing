@@ -1,31 +1,39 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 // IMAP credentials for syncing ticket emails
-export const imapCredentials = sqliteTable('imap_credentials', {
-  id: text('id').primaryKey(),
-  userId: text('user_id').notNull(), // References user.id from main app
-  userEmail: text('user_email').notNull(), // User's main email (for /api/ingest matching)
-  provider: text('provider').notNull(), // 'icloud', 'yahoo', 'outlook', 'gmail', 'other'
-  imapEmail: text('imap_email').notNull(), // Email for IMAP login (may differ from userEmail)
-  host: text('host').notNull(),
-  port: integer('port').notNull().default(993),
-  encryptedPassword: text('encrypted_password').notNull(),
-  iv: text('iv').notNull(), // AES-GCM initialization vector (base64)
-  syncMode: text('sync_mode').notNull().default('manual'), // 'manual' or 'auto_daily'
-  lastSyncAt: integer('last_sync_at', { mode: 'timestamp' }), // Last successful sync (manual or auto)
-  lastManualSyncAt: integer('last_manual_sync_at', { mode: 'timestamp' }), // For rate limiting manual syncs
-  createdAt: integer('created_at', { mode: 'timestamp' })
-    .notNull()
-    .$defaultFn(() => new Date()),
-  updatedAt: integer('updated_at', { mode: 'timestamp' })
-    .notNull()
-    .$defaultFn(() => new Date()),
-})
+export const imapCredentials = sqliteTable(
+  'imap_credentials',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(), // References user.id from main app
+    userEmail: text('user_email').notNull(), // User's main email (for /api/ingest matching)
+    provider: text('provider').notNull(), // 'icloud', 'yahoo', 'outlook', 'gmail', 'other'
+    imapEmail: text('imap_email').notNull(), // Email for IMAP login (may differ from userEmail)
+    host: text('host').notNull(),
+    port: integer('port').notNull().default(993),
+    encryptedPassword: text('encrypted_password').notNull(),
+    iv: text('iv').notNull(), // AES-GCM initialization vector (base64)
+    syncMode: text('sync_mode').notNull().default('manual'), // 'manual' or 'auto_daily'
+    lastSyncAt: integer('last_sync_at', { mode: 'timestamp' }), // Last successful sync (manual or auto)
+    lastManualSyncAt: integer('last_manual_sync_at', { mode: 'timestamp' }), // For rate limiting manual syncs
+    createdAt: integer('created_at', { mode: 'timestamp' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer('updated_at', { mode: 'timestamp' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    // Prevent duplicate IMAP accounts per user
+    uniqueUserImapEmail: uniqueIndex('unique_user_imap_email').on(table.userId, table.imapEmail),
+  })
+)
 
 // Sync history for audit logging
 export const syncHistory = sqliteTable('sync_history', {
   id: text('id').primaryKey(),
   userId: text('user_id').notNull(),
+  credentialId: text('credential_id'), // Links to specific IMAP account
   status: text('status').notNull(), // 'success', 'error', 'partial'
   emailsFound: integer('emails_found').default(0),
   emailsIngested: integer('emails_ingested').default(0),

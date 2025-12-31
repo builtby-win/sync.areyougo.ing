@@ -21,7 +21,22 @@ interface FetchOptions {
   lookbackDays?: number
 }
 
-interface Email {
+/**
+ * Progress callbacks for tracking connection and fetch progress
+ */
+export interface FetchProgressCallback {
+  // Connection state callbacks
+  onConnecting?: () => void
+  onAuthenticating?: () => void
+  onConnected?: () => void
+  onConnectionError?: (error: Error) => void
+  // Sender progress callbacks
+  onSenderStart: (sender: string) => void
+  onSenderComplete: (sender: string, emails: Email[]) => void
+  onError: (sender: string, error: Error) => void
+}
+
+export interface Email {
   messageId: string
   from: string
   subject: string
@@ -50,7 +65,13 @@ function createClient(host: string, port: number, email: string, password: strin
       user: email,
       pass: password,
     },
-    logger: false, // Disable verbose logging
+    // Enable logging to debug iCloud IMAP issues
+    logger: {
+      debug: (msg: unknown) => console.log('[imapflow:debug]', msg),
+      info: (msg: unknown) => console.log('[imapflow:info]', msg),
+      warn: (msg: unknown) => console.warn('[imapflow:warn]', msg),
+      error: (msg: unknown) => console.error('[imapflow:error]', msg),
+    },
   })
 }
 
@@ -154,16 +175,20 @@ export async function fetchSampleEmails(
 
 /**
  * Fetch emails from approved senders since last sync
+ * @param progress - Optional callbacks for progressive UI updates
+ * @param plaintextPassword - Optional plaintext password (bypasses encryption, used for test connections)
  */
 export async function fetchTicketEmails(
   credentials: ImapCredentials,
   encryptionKey: string,
-  options?: FetchOptions
+  options?: FetchOptions,
+  progress?: FetchProgressCallback,
+  plaintextPassword?: string
 ): Promise<Email[]> {
   console.log(`[imap-client] Fetching ticket emails from ${credentials.host}:${credentials.port}...`)
 
-  // Decrypt password
-  const password = await decryptPassword(
+  // Use plaintext password if provided, otherwise decrypt
+  const password = plaintextPassword || await decryptPassword(
     credentials.encryptedPassword,
     credentials.iv,
     encryptionKey
@@ -174,7 +199,16 @@ export async function fetchTicketEmails(
   const emails: Email[] = []
 
   try {
+    // Signal connection progress
+    progress?.onConnecting?.()
+    console.log('[imap-client] Connecting...')
+
+    progress?.onAuthenticating?.()
+    console.log('[imap-client] Authenticating...')
+
     await client.connect()
+
+    progress?.onConnected?.()
     console.log('[imap-client] Connected')
 
     const lock = await client.getMailboxLock('INBOX')
@@ -195,18 +229,61 @@ export async function fetchTicketEmails(
 
       // Search for emails from each approved sender
       for (const sender of APPROVED_SENDERS) {
+        // IMAP FROM search matches if the string appears anywhere in the FROM field
+        // So 'ticketmaster' will match @ticketmaster.com, @email.ticketmaster.com, etc.
+        console.log(`[imap-client] Searching for emails from ${sender}...`)
+        progress?.onSenderStart(sender)
+
+        // Track emails found for this sender (for progress callback)
+        const senderEmails: Email[] = []
+
         try {
           const results = await client.search({
             from: sender,
             since: sinceDate,
           })
 
-          if (results.length === 0) continue
+          // Debug logging to understand what iCloud returns
+          console.log(`[imap-client] Raw search results for ${sender}:`, {
+            type: typeof results,
+            isArray: Array.isArray(results),
+            isSet: results instanceof Set,
+            isFalsy: !results,
+            constructorName: results?.constructor?.name,
+            value: results,
+          })
 
-          console.log(`[imap-client] Found ${results.length} emails from ${sender}`)
+          // Handle all possible return values from imapflow search
+          // - Array<number>: normal success case
+          // - false: error or not in SELECTED state
+          // - undefined: no mailbox selected
+          if (!results) {
+            console.log(`[imap-client] No results for ${sender} (returned ${results})`)
+            progress?.onSenderComplete(sender, [])
+            continue
+          }
+
+          // Convert to array - imapflow returns Array, but handle Set for safety
+          let resultArray: number[]
+          if (Array.isArray(results)) {
+            resultArray = results
+          } else if (results instanceof Set) {
+            resultArray = Array.from(results)
+          } else {
+            console.warn(`[imap-client] Unexpected search result type for ${sender}:`, typeof results, results)
+            progress?.onSenderComplete(sender, [])
+            continue
+          }
+
+          if (resultArray.length === 0) {
+            progress?.onSenderComplete(sender, [])
+            continue
+          }
+
+          console.log(`[imap-client] Found ${resultArray.length} emails from ${sender}`)
 
           // Limit to 10 per sender
-          const uidsToFetch = results.slice(0, 10)
+          const uidsToFetch = resultArray.slice(0, 10)
 
           for await (const msg of client.fetch(uidsToFetch, {
             envelope: true,
@@ -227,16 +304,22 @@ export async function fetchTicketEmails(
               }
             }
 
-            emails.push({
+            const email: Email = {
               messageId: msg.envelope.messageId || `${msg.uid}@unknown`,
               from: fromName ? `${fromName} <${fromAddress}>` : fromAddress,
               subject: msg.envelope.subject || '(no subject)',
               date: msg.envelope.date || new Date(),
               body: body.trim(),
-            })
+            }
+            emails.push(email)
+            senderEmails.push(email)
           }
+
+          // Notify progress callback with this sender's emails
+          progress?.onSenderComplete(sender, senderEmails)
         } catch (searchError) {
           console.error(`[imap-client] Error searching for ${sender}:`, searchError)
+          progress?.onError(sender, searchError instanceof Error ? searchError : new Error(String(searchError)))
           // Continue with other senders
         }
       }
@@ -249,6 +332,7 @@ export async function fetchTicketEmails(
     await client.logout()
   } catch (error) {
     console.error('[imap-client] Error fetching ticket emails:', error)
+    progress?.onConnectionError?.(error instanceof Error ? error : new Error(String(error)))
     throw error
   }
 

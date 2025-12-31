@@ -6,7 +6,8 @@ interface User {
   name: string | null
 }
 
-interface ExistingCredentials {
+interface AccountCredential {
+  id: string
   provider: string
   imapEmail: string
   lastSyncAt: number | null
@@ -16,8 +17,9 @@ interface ExistingCredentials {
 
 interface Props {
   user: User
-  credentials: ExistingCredentials
-  onUpdateSettings: () => void
+  credential: AccountCredential
+  onUpdate: () => void
+  onDelete: () => void
 }
 
 type SyncMode = 'manual' | 'auto_daily'
@@ -38,6 +40,8 @@ interface SyncEmail {
   ingestError?: string
 }
 
+type ConnectionState = 'connecting' | 'authenticating' | 'connected' | 'error'
+
 interface SyncStatus {
   status: 'fetching' | 'ingesting' | 'completed' | 'failed'
   emails: SyncEmail[]
@@ -48,6 +52,9 @@ interface SyncStatus {
   currentSender?: string
   sendersCompleted?: string[]
   sendersTotal?: number
+  // Connection state tracking
+  connectionState?: ConnectionState
+  connectionError?: string
 }
 
 const LOOKBACK_OPTIONS: LookbackOption[] = [
@@ -66,8 +73,8 @@ const PROVIDER_NAMES: Record<string, string> = {
   other: 'Custom IMAP',
 }
 
-export default function SyncSettings({ user, credentials, onUpdateSettings }: Props) {
-  const [syncMode, setSyncMode] = useState<SyncMode>(credentials.syncMode as SyncMode)
+export default function AccountCard({ user, credential, onUpdate, onDelete }: Props) {
+  const [syncMode, setSyncMode] = useState<SyncMode>(credential.syncMode as SyncMode)
   const [isUpdatingSyncMode, setIsUpdatingSyncMode] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
@@ -75,16 +82,19 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
   const [lookbackDays, setLookbackDays] = useState(30)
   const [showLookbackSelector, setShowLookbackSelector] = useState(false)
   const [rateLimitedUntil, setRateLimitedUntil] = useState<Date | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
-  // New state for progressive loading
+  // State for progressive loading
   const [syncSessionId, setSyncSessionId] = useState<string | null>(null)
   const [syncEmails, setSyncEmails] = useState<SyncEmail[]>([])
   const [syncStatus, setSyncStatus] = useState<SyncStatus['status'] | null>(null)
   const [currentSender, setCurrentSender] = useState<string | undefined>()
   const [sendersCompleted, setSendersCompleted] = useState<number>(0)
   const [sendersTotal, setSendersTotal] = useState<number>(0)
+  const [connectionState, setConnectionState] = useState<ConnectionState | undefined>()
 
-  // Check if we're in development (Docker sets NODE_ENV=development)
+  // Check if we're in development
   const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
 
   // Calculate if rate limited (only in production)
@@ -93,15 +103,15 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
       setRateLimitedUntil(null)
       return
     }
-    if (credentials.lastManualSyncAt) {
-      const nextAvailable = new Date(credentials.lastManualSyncAt * 1000 + 24 * 60 * 60 * 1000)
+    if (credential.lastManualSyncAt) {
+      const nextAvailable = new Date(credential.lastManualSyncAt * 1000 + 24 * 60 * 60 * 1000)
       if (nextAvailable > new Date()) {
         setRateLimitedUntil(nextAvailable)
       } else {
         setRateLimitedUntil(null)
       }
     }
-  }, [credentials.lastManualSyncAt, isDev])
+  }, [credential.lastManualSyncAt, isDev])
 
   // Polling effect for sync status
   useEffect(() => {
@@ -117,6 +127,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
           setCurrentSender(data.currentSender)
           setSendersCompleted(data.sendersCompleted?.length || 0)
           setSendersTotal(data.sendersTotal || 0)
+          setConnectionState(data.connectionState)
 
           if (data.status === 'completed' || data.status === 'failed') {
             clearInterval(pollInterval)
@@ -125,7 +136,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
             if (data.status === 'failed' && data.error) {
               setSyncError(data.error)
             }
-            onUpdateSettings()
+            onUpdate()
           }
         }
       } catch (error) {
@@ -134,7 +145,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
     }, 1500)
 
     return () => clearInterval(pollInterval)
-  }, [syncSessionId, onUpdateSettings])
+  }, [syncSessionId, onUpdate])
 
   const handleSyncModeChange = async (newMode: SyncMode) => {
     if (newMode === syncMode) return
@@ -146,7 +157,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
       const response = await fetch('/api/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ syncMode: newMode }),
+        body: JSON.stringify({ credentialId: credential.id, syncMode: newMode }),
       })
 
       if (!response.ok) {
@@ -156,7 +167,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
       }
 
       setSyncMode(newMode)
-      onUpdateSettings()
+      onUpdate()
     } catch {
       setSyncError('Failed to update sync mode')
     } finally {
@@ -175,12 +186,13 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
       setCurrentSender(undefined)
       setSendersCompleted(0)
       setSendersTotal(0)
+      setConnectionState(undefined)
 
       try {
         const response = await fetch('/api/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lookbackDays, dryRun }),
+          body: JSON.stringify({ credentialId: credential.id, lookbackDays, dryRun }),
         })
 
         const data = await response.json()
@@ -221,8 +233,33 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
         setShowLookbackSelector(false)
       }
     },
-    [lookbackDays]
+    [credential.id, lookbackDays]
   )
+
+  const handleDelete = async () => {
+    setIsDeleting(true)
+    setSyncError(null)
+
+    try {
+      const response = await fetch('/api/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credentialId: credential.id }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        setSyncError(data.error || 'Failed to delete account')
+        setIsDeleting(false)
+        return
+      }
+
+      onDelete()
+    } catch {
+      setSyncError('Failed to delete account')
+      setIsDeleting(false)
+    }
+  }
 
   const formatRelativeTime = (timestamp: number) => {
     const date = new Date(timestamp * 1000)
@@ -263,9 +300,12 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
 
   const getStatusMessage = () => {
     if (syncStatus === 'fetching') {
+      if (connectionState === 'connecting') return 'Connecting to inbox...'
+      if (connectionState === 'authenticating') return 'Authenticating...'
       if (currentSender) {
         return `Searching ${formatSenderName(currentSender)}... (${sendersCompleted}/${sendersTotal})`
       }
+      if (connectionState === 'connected') return 'Connected! Starting search...'
       return 'Connecting to inbox...'
     }
     if (syncStatus === 'ingesting') return `Found ${syncEmails.length} ticket emails • Synced ${syncEmails.filter(e => e.ingestStatus === 'success').length}`
@@ -278,24 +318,65 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
   return (
     <div className="bg-card rounded-lg border border-border p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
-          <svg className="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
+            <svg className="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="font-semibold">{credential.imapEmail}</h2>
+            <p className="text-sm text-muted-foreground">
+              {PROVIDER_NAMES[credential.provider] || credential.provider}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowDeleteConfirm(true)}
+          className="text-muted-foreground hover:text-destructive transition-colors p-2"
+          title="Remove account"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+            />
           </svg>
-        </div>
-        <div>
-          <h2 className="font-semibold">Email Sync Active</h2>
-          <p className="text-sm text-muted-foreground">
-            {credentials.imapEmail} via {PROVIDER_NAMES[credentials.provider] || credentials.provider}
-          </p>
-        </div>
+        </button>
       </div>
 
+      {/* Delete confirmation */}
+      {showDeleteConfirm && (
+        <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-md space-y-3">
+          <p className="text-sm">Are you sure you want to remove this account?</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirm(false)}
+              className="flex-1 px-3 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="flex-1 px-3 py-2 bg-destructive text-destructive-foreground rounded-md text-sm font-medium disabled:opacity-50"
+            >
+              {isDeleting ? 'Removing...' : 'Remove'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Last sync info */}
-      {credentials.lastSyncAt && (
+      {credential.lastSyncAt && (
         <div className="text-sm text-muted-foreground">
-          Last synced: {formatRelativeTime(credentials.lastSyncAt)}
+          Last synced: {formatRelativeTime(credential.lastSyncAt)}
         </div>
       )}
 
@@ -348,6 +429,26 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
           {syncResult.ingested > 0
             ? `Synced ${syncResult.ingested} of ${syncResult.found} ticket emails to areyougo.ing.`
             : `No new ticket emails found.`}
+        </div>
+      )}
+
+      {/* Status message during connection (before emails arrive) */}
+      {syncStatus === 'fetching' && syncEmails.length === 0 && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <svg
+            className="animate-spin h-4 w-4"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            />
+          </svg>
+          <span>{getStatusMessage()}</span>
         </div>
       )}
 
@@ -477,13 +578,6 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
             )}
           </div>
         )}
-      </div>
-
-      {/* Dashboard link */}
-      <div className="pt-2 border-t border-border">
-        <a href="https://areyougo.ing/dashboard" className="text-sm text-primary hover:underline">
-          View your timeline on areyougo.ing →
-        </a>
       </div>
     </div>
   )

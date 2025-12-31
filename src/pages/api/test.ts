@@ -1,5 +1,15 @@
 import type { APIRoute } from 'astro'
-import { fetchSampleEmails, type EmailPreview } from '../../lib/imap-client'
+import { APPROVED_SENDERS } from '../../lib/approved-senders'
+import { fetchTicketEmails } from '../../lib/imap-client'
+import {
+  addEmailToSession,
+  cleanupSessions,
+  createSession,
+  markSenderCompleted,
+  updateConnectionState,
+  updateCurrentSender,
+  updateSession,
+} from '../../lib/sync-sessions'
 import { verifySession } from '../../lib/verify-session'
 
 interface TestRequest {
@@ -14,12 +24,94 @@ interface TestResponse {
   success: boolean
   message?: string
   error?: string
-  sampleEmails?: EmailPreview[]
+  sessionId?: string
+}
+
+// Default lookback for test: 30 days
+const TEST_LOOKBACK_DAYS = 30
+
+// Async function to process test connection in background
+async function processTest(
+  sessionId: string,
+  email: string,
+  password: string,
+  host: string,
+  port: number
+) {
+  try {
+    // Fetch emails from approved senders with progress callbacks (no ingest)
+    await fetchTicketEmails(
+      {
+        host,
+        port,
+        email,
+        encryptedPassword: '', // Not used - password passed directly
+        iv: '', // Not used
+        lastSyncAt: null,
+      },
+      '', // encryption key not needed
+      { lookbackDays: TEST_LOOKBACK_DAYS },
+      {
+        onConnecting: () => {
+          console.log(`[test:${sessionId}] Connecting...`)
+          updateConnectionState(sessionId, 'connecting')
+        },
+        onAuthenticating: () => {
+          console.log(`[test:${sessionId}] Authenticating...`)
+          updateConnectionState(sessionId, 'authenticating')
+        },
+        onConnected: () => {
+          console.log(`[test:${sessionId}] Connected!`)
+          updateConnectionState(sessionId, 'connected')
+        },
+        onConnectionError: (error) => {
+          console.error(`[test:${sessionId}] Connection error:`, error)
+          updateConnectionState(sessionId, 'error', error.message)
+        },
+        onSenderStart: (sender) => {
+          console.log(`[test:${sessionId}] Searching ${sender}...`)
+          updateCurrentSender(sessionId, sender)
+        },
+        onSenderComplete: (sender, emails) => {
+          console.log(`[test:${sessionId}] Found ${emails.length} emails from ${sender}`)
+          markSenderCompleted(sessionId, sender)
+          // Add emails to session (preview only, no ingest)
+          for (const emailData of emails) {
+            addEmailToSession(sessionId, {
+              messageId: emailData.messageId,
+              from: emailData.from,
+              subject: emailData.subject,
+              date: emailData.date.toISOString(),
+              body: emailData.body,
+              ingestStatus: 'pending', // Will stay pending (no ingest for test)
+            })
+          }
+        },
+        onError: (sender, error) => {
+          console.error(`[test:${sessionId}] Error searching ${sender}:`, error)
+          markSenderCompleted(sessionId, sender)
+        },
+      },
+      password // Pass password directly instead of using encryption
+    )
+
+    // Clear current sender and mark complete (no ingesting for test)
+    updateCurrentSender(sessionId, undefined)
+    updateSession(sessionId, { status: 'completed', completedAt: new Date() })
+    console.log(`[test:${sessionId}] Test complete`)
+  } catch (error) {
+    console.error(`[test:${sessionId}] Error:`, error)
+    updateSession(sessionId, {
+      status: 'failed',
+      error: error instanceof Error ? error.message : 'Connection test failed',
+      completedAt: new Date(),
+    })
+    throw error
+  }
 }
 
 export const POST: APIRoute = async ({ request }) => {
   console.log('[test] POST request received')
-  const startTime = Date.now()
 
   const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
 
@@ -50,43 +142,28 @@ export const POST: APIRoute = async ({ request }) => {
 
     console.log('[test] Testing connection to:', { provider, email, host, port })
 
-    // Test connection and fetch sample emails from approved senders
-    const result = await fetchSampleEmails({
-      host,
-      port,
-      email,
-      password,
+    // Create session and process asynchronously
+    cleanupSessions()
+    const sessionId = createSession(user.id, APPROVED_SENDERS.length)
+
+    // Start async processing (don't await)
+    processTest(sessionId, email, password, host, port).catch((err) => {
+      console.error(`[test:${sessionId}] Async test error:`, err)
+      updateSession(sessionId, {
+        status: 'failed',
+        error: err instanceof Error ? err.message : 'Connection test failed',
+        completedAt: new Date(),
+      })
     })
 
-    console.log('[test] Connection test result:', {
-      success: result.success,
-      emailCount: result.emails?.length ?? 0,
-      elapsed: Date.now() - startTime,
-    })
-
-    if (!result.success) {
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: result.error || 'Connection failed',
-        } satisfies TestResponse),
-        {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
-    }
-
+    // Return immediately with sessionId for polling
     return new Response(
       JSON.stringify({
         success: true,
-        message: 'Connection successful',
-        sampleEmails: result.emails || [],
+        sessionId,
+        message: 'Test started',
       } satisfies TestResponse),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }
+      { status: 202, headers: { 'Content-Type': 'application/json' } }
     )
   } catch (error) {
     console.error('[test] Error:', error)

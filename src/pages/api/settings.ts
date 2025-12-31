@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { getDb } from '../../lib/db'
 import { imapCredentials } from '../../lib/schema'
 import { verifySession } from '../../lib/verify-session'
@@ -7,22 +7,26 @@ import { verifySession } from '../../lib/verify-session'
 type SyncMode = 'manual' | 'auto_daily'
 
 interface SettingsRequest {
+  credentialId: string
   syncMode: SyncMode
+}
+
+interface AccountInfo {
+  id: string
+  syncMode: SyncMode
+  lastSyncAt: string | null
+  lastManualSyncAt: string | null
+  provider: string
+  imapEmail: string
 }
 
 interface SettingsResponse {
   success: boolean
   error?: string
-  settings?: {
-    syncMode: SyncMode
-    lastSyncAt: string | null
-    lastManualSyncAt: string | null
-    provider: string
-    imapEmail: string
-  }
+  accounts?: AccountInfo[]
 }
 
-// GET - Fetch current settings
+// GET - Fetch all accounts for user
 export const GET: APIRoute = async ({ request }) => {
   console.log('[settings] GET request received')
 
@@ -43,27 +47,19 @@ export const GET: APIRoute = async ({ request }) => {
       .select()
       .from(imapCredentials)
       .where(eq(imapCredentials.userId, user.id))
-      .limit(1)
-
-    if (creds.length === 0) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'No IMAP credentials configured' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      )
-    }
-
-    const cred = creds[0]
+      .orderBy(imapCredentials.createdAt)
 
     return new Response(
       JSON.stringify({
         success: true,
-        settings: {
+        accounts: creds.map((cred) => ({
+          id: cred.id,
           syncMode: cred.syncMode as SyncMode,
           lastSyncAt: cred.lastSyncAt?.toISOString() || null,
           lastManualSyncAt: cred.lastManualSyncAt?.toISOString() || null,
           provider: cred.provider,
           imapEmail: cred.imapEmail,
-        },
+        })),
       } satisfies SettingsResponse),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     )
@@ -79,7 +75,7 @@ export const GET: APIRoute = async ({ request }) => {
   }
 }
 
-// PATCH - Update settings
+// PATCH - Update settings for a specific account
 export const PATCH: APIRoute = async ({ request }) => {
   console.log('[settings] PATCH request received')
 
@@ -95,7 +91,14 @@ export const PATCH: APIRoute = async ({ request }) => {
     }
 
     const body = (await request.json()) as SettingsRequest
-    const { syncMode } = body
+    const { credentialId, syncMode } = body
+
+    if (!credentialId) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'credentialId is required' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
 
     // Validate syncMode
     if (!['manual', 'auto_daily'].includes(syncMode)) {
@@ -107,35 +110,29 @@ export const PATCH: APIRoute = async ({ request }) => {
 
     const db = getDb()
 
-    // Check if user has credentials
-    const existing = await db
-      .select({ id: imapCredentials.id })
-      .from(imapCredentials)
-      .where(eq(imapCredentials.userId, user.id))
-      .limit(1)
-
-    if (existing.length === 0) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'No IMAP credentials configured' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // Update syncMode
-    await db
+    // Update syncMode for specific credential (must belong to user)
+    const result = await db
       .update(imapCredentials)
       .set({
         syncMode,
         updatedAt: new Date(),
       })
-      .where(eq(imapCredentials.userId, user.id))
+      .where(and(eq(imapCredentials.id, credentialId), eq(imapCredentials.userId, user.id)))
+      .returning({ id: imapCredentials.id })
 
-    console.log(`[settings] Updated syncMode to ${syncMode} for user ${user.id}`)
+    if (result.length === 0) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Credential not found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
 
-    return new Response(
-      JSON.stringify({ success: true }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
-    )
+    console.log(`[settings] Updated syncMode to ${syncMode} for credential ${credentialId}`)
+
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
   } catch (error) {
     console.error('[settings] PATCH error:', error)
     return new Response(

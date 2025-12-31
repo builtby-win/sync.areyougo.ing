@@ -31,14 +31,14 @@ async function runSync(): Promise<void> {
     .from(imapCredentials)
     .where(eq(imapCredentials.syncMode, 'auto_daily'))
 
-  console.log(`[cron] Found ${credentials.length} users to sync`)
+  console.log(`[cron] Found ${credentials.length} accounts to sync`)
 
   for (const cred of credentials) {
     const startedAt = new Date()
     const historyId = crypto.randomUUID()
 
     try {
-      console.log(`[cron] Syncing user: ${cred.userId}`)
+      console.log(`[cron] Syncing account: ${cred.imapEmail} (user: ${cred.userId})`)
 
       // Fetch emails from approved senders
       const emails = await fetchTicketEmails(
@@ -89,16 +89,17 @@ async function runSync(): Promise<void> {
         }
       }
 
-      // Update last sync time
+      // Update last sync time for this specific credential
       await db
         .update(imapCredentials)
         .set({ lastSyncAt: new Date(), updatedAt: new Date() })
-        .where(eq(imapCredentials.userId, cred.userId))
+        .where(eq(imapCredentials.id, cred.id))
 
-      // Log success
+      // Log success with credentialId
       await db.insert(syncHistory).values({
         id: historyId,
         userId: cred.userId,
+        credentialId: cred.id,
         status: ingestedCount === emails.length ? 'success' : 'partial',
         emailsFound: emails.length,
         emailsIngested: ingestedCount,
@@ -106,14 +107,15 @@ async function runSync(): Promise<void> {
         completedAt: new Date(),
       })
 
-      console.log(`[cron] Sync complete for ${cred.userId}: ${ingestedCount}/${emails.length} ingested`)
+      console.log(`[cron] Sync complete for ${cred.imapEmail}: ${ingestedCount}/${emails.length} ingested`)
     } catch (error) {
-      console.error(`[cron] Sync failed for ${cred.userId}:`, error)
+      console.error(`[cron] Sync failed for ${cred.imapEmail}:`, error)
 
-      // Log error
+      // Log error with credentialId
       await db.insert(syncHistory).values({
         id: historyId,
         userId: cred.userId,
+        credentialId: cred.id,
         status: 'error',
         emailsFound: 0,
         emailsIngested: 0,

@@ -20,9 +20,33 @@ interface EmailPreview {
   date: string
 }
 
+type ConnectionState = 'connecting' | 'authenticating' | 'connected' | 'error'
+
+interface SyncEmail {
+  messageId: string
+  from: string
+  subject: string
+  date: string
+  ingestStatus: 'pending' | 'sending' | 'success' | 'failed'
+}
+
+interface SyncStatusResponse {
+  status: 'fetching' | 'ingesting' | 'completed' | 'failed'
+  emails: SyncEmail[]
+  totalFound: number
+  error?: string
+  currentSender?: string
+  sendersCompleted?: string[]
+  sendersTotal?: number
+  connectionState?: ConnectionState
+  connectionError?: string
+}
+
 interface Props {
   user: User
   existingCredentials: ExistingCredentials | null
+  onComplete?: () => void
+  onCancel?: () => void
 }
 
 type Provider = 'icloud' | 'gmail' | 'yahoo' | 'outlook' | 'other'
@@ -32,9 +56,20 @@ interface ProviderConfig {
   name: string
   host: string
   port: number
-  instructions: string[]
+  instructions: React.ReactNode[]
   helpUrl: string
 }
+
+const Link = ({ href, children }: { href: string; children: React.ReactNode }) => (
+  <a
+    href={href}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="text-primary hover:underline"
+  >
+    {children}
+  </a>
+)
 
 const PROVIDERS: Record<Provider, ProviderConfig> = {
   icloud: {
@@ -42,11 +77,11 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     host: 'imap.mail.me.com',
     port: 993,
     instructions: [
-      'Go to appleid.apple.com and sign in',
-      'Go to "Sign-In and Security" → "App-Specific Passwords"',
-      'Click "Generate an app-specific password"',
-      'Name it "areyougo.ing" and click Create',
-      'Copy the password shown (you won\'t see it again)',
+      <>Go to <Link href="https://appleid.apple.com">appleid.apple.com</Link> and sign in</>,
+      <>Go to "Sign-In and Security" → "App-Specific Passwords"</>,
+      <>Click "Generate an app-specific password"</>,
+      <>Name it "areyougo.ing" and click Create</>,
+      <>Copy the password shown (you won't see it again)</>,
     ],
     helpUrl: 'https://support.apple.com/en-us/102654',
   },
@@ -55,11 +90,11 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     host: 'imap.gmail.com',
     port: 993,
     instructions: [
-      'Go to myaccount.google.com/apppasswords',
-      'Sign in if prompted',
-      'Select "Mail" as the app and your device',
-      'Click "Generate"',
-      'Copy the 16-character password shown',
+      <>Go to <Link href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</Link></>,
+      <>Sign in if prompted</>,
+      <>Select "Mail" as the app and your device</>,
+      <>Click "Generate"</>,
+      <>Copy the 16-character password shown</>,
     ],
     helpUrl: 'https://support.google.com/accounts/answer/185833',
   },
@@ -68,11 +103,11 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     host: 'imap.mail.yahoo.com',
     port: 993,
     instructions: [
-      'Go to login.yahoo.com/account/security',
-      'Scroll to "Generate app password"',
-      'Select "Other App" and enter "areyougo.ing"',
-      'Click "Generate"',
-      'Copy the password shown',
+      <>Go to <Link href="https://login.yahoo.com/account/security">login.yahoo.com/account/security</Link></>,
+      <>Scroll to "Generate app password"</>,
+      <>Select "Other App" and enter "areyougo.ing"</>,
+      <>Click "Generate"</>,
+      <>Copy the password shown</>,
     ],
     helpUrl: 'https://help.yahoo.com/kb/SLN15241.html',
   },
@@ -81,10 +116,10 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     host: 'outlook.office365.com',
     port: 993,
     instructions: [
-      'Go to account.microsoft.com/security',
-      'Click "Advanced security options"',
-      'Under "App passwords", click "Create a new app password"',
-      'Copy the password shown',
+      <>Go to <Link href="https://account.microsoft.com/security">account.microsoft.com/security</Link></>,
+      <>Click "Advanced security options"</>,
+      <>Under "App passwords", click "Create a new app password"</>,
+      <>Copy the password shown</>,
     ],
     helpUrl: 'https://support.microsoft.com/en-us/account-billing/using-app-passwords-with-apps-that-don-t-support-two-step-verification-5896ed9b-4263-e681-128a-a6f2979a7944',
   },
@@ -93,9 +128,9 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     host: '',
     port: 993,
     instructions: [
-      'Find your email provider\'s IMAP settings',
-      'Generate an app-specific password if available',
-      'Enter the IMAP server hostname and port below',
+      <>Find your email provider's IMAP settings</>,
+      <>Generate an app-specific password if available</>,
+      <>Enter the IMAP server hostname and port below</>,
     ],
     helpUrl: '',
   },
@@ -103,7 +138,7 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
 
 type Step = 'provider' | 'instructions' | 'credentials' | 'testing' | 'preferences' | 'success' | 'manage'
 
-export default function SetupWizard({ user, existingCredentials }: Props) {
+export default function SetupWizard({ user, existingCredentials, onComplete, onCancel }: Props) {
   const [step, setStep] = useState<Step>(existingCredentials ? 'manage' : 'provider')
   const [provider, setProvider] = useState<Provider | null>(null)
   const [email, setEmail] = useState('')
@@ -115,32 +150,71 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [sampleEmails, setSampleEmails] = useState<EmailPreview[]>([])
   const [syncMode, setSyncMode] = useState<SyncMode>('manual')
-  const [progressMessage, setProgressMessage] = useState<string>('')
 
-  // Cycle through progress messages while loading
+  // Real polling state for test connection
+  const [testSessionId, setTestSessionId] = useState<string | null>(null)
+  const [connectionState, setConnectionState] = useState<ConnectionState | undefined>()
+  const [currentSender, setCurrentSender] = useState<string | undefined>()
+  const [sendersCompleted, setSendersCompleted] = useState<number>(0)
+  const [sendersTotal, setSendersTotal] = useState<number>(0)
+  const [testStatus, setTestStatus] = useState<SyncStatusResponse['status'] | null>(null)
+
+  // Polling effect for test session status
   useEffect(() => {
-    if (!isLoading) {
-      setProgressMessage('')
-      return
+    if (!testSessionId) return
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/sync-status?sessionId=${testSessionId}`)
+        if (response.ok) {
+          const data: SyncStatusResponse = await response.json()
+          setConnectionState(data.connectionState)
+          setCurrentSender(data.currentSender)
+          setSendersCompleted(data.sendersCompleted?.length || 0)
+          setSendersTotal(data.sendersTotal || 0)
+          setTestStatus(data.status)
+
+          if (data.status === 'completed' || data.status === 'failed') {
+            clearInterval(pollInterval)
+            setIsLoading(false)
+
+            if (data.status === 'completed') {
+              // Convert to EmailPreview format for display
+              const previews: EmailPreview[] = data.emails.map((e) => ({
+                from: e.from,
+                subject: e.subject,
+                date: e.date,
+              }))
+              setSampleEmails(previews)
+              setStep('testing')
+            } else if (data.error) {
+              setError(data.connectionError || data.error || 'Connection failed')
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Polling error:', error)
+      }
+    }, 1000)
+
+    return () => clearInterval(pollInterval)
+  }, [testSessionId])
+
+  // Format sender name for display
+  const formatSenderName = (sender: string) => {
+    return sender.charAt(0).toUpperCase() + sender.slice(1)
+  }
+
+  // Get progress message based on real state
+  const getProgressMessage = () => {
+    if (connectionState === 'connecting') return 'Connecting to your email...'
+    if (connectionState === 'authenticating') return 'Authenticating...'
+    if (connectionState === 'connected' && currentSender) {
+      return `Searching ${formatSenderName(currentSender)}... (${sendersCompleted}/${sendersTotal})`
     }
-
-    const messages = [
-      'Connecting to your email...',
-      'Establishing secure connection...',
-      'Authenticating...',
-      'Scanning for ticket emails...',
-      'Almost done...',
-    ]
-    let index = 0
-    setProgressMessage(messages[0])
-
-    const interval = setInterval(() => {
-      index = Math.min(index + 1, messages.length - 1)
-      setProgressMessage(messages[index])
-    }, 2000)
-
-    return () => clearInterval(interval)
-  }, [isLoading])
+    if (connectionState === 'connected') return 'Connected! Starting search...'
+    return 'Connecting to your email...'
+  }
 
   const handleProviderSelect = (p: Provider) => {
     setProvider(p)
@@ -154,6 +228,13 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
 
     setIsLoading(true)
     setError(null)
+    setTestSessionId(null)
+    setConnectionState(undefined)
+    setCurrentSender(undefined)
+    setSendersCompleted(0)
+    setSendersTotal(0)
+    setTestStatus(null)
+    setSampleEmails([])
 
     try {
       const response = await fetch('/api/test', {
@@ -172,15 +253,22 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
 
       if (!response.ok) {
         setError(data.error || 'Connection test failed')
+        setIsLoading(false)
         return
       }
 
-      // Store sample emails from approved senders
-      setSampleEmails(data.sampleEmails || [])
-      setStep('testing')
+      // Start polling with sessionId
+      if (data.sessionId) {
+        setTestSessionId(data.sessionId)
+        // isLoading stays true, polling effect handles the rest
+      } else {
+        // Fallback for old API response format
+        setSampleEmails(data.sampleEmails || [])
+        setStep('testing')
+        setIsLoading(false)
+      }
     } catch {
       setError('Failed to test connection. Please try again.')
-    } finally {
       setIsLoading(false)
     }
   }
@@ -223,7 +311,12 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
         return
       }
 
-      setStep('success')
+      // If callback provided, use it; otherwise reload
+      if (onComplete) {
+        onComplete()
+      } else {
+        setStep('success')
+      }
     } catch {
       setError('Failed to save credentials. Please try again.')
     } finally {
@@ -339,6 +432,17 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
             </button>
           ))}
         </div>
+        {onCancel && (
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="w-full px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -493,13 +597,13 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
             </button>
           </div>
 
-          {isLoading && progressMessage && (
+          {isLoading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
-              <span>{progressMessage}</span>
+              <span>{getProgressMessage()}</span>
             </div>
           )}
         </form>
@@ -657,42 +761,20 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
     )
   }
 
-  // Success
+  // Success - reload page to show SyncSettings with sync button
   if (step === 'success') {
+    // Auto-reload to show SyncSettings component which has the sync functionality
+    window.location.reload()
     return (
       <div className="bg-card rounded-lg border border-border p-6 text-center">
         <div className="w-16 h-16 rounded-full bg-success/20 flex items-center justify-center mx-auto mb-4">
-          <svg className="w-8 h-8 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          <svg className="animate-spin w-8 h-8 text-primary" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
         </div>
-        <h2 className="font-semibold text-xl mb-2">You're All Set!</h2>
-        {syncMode === 'auto_daily' ? (
-          <p className="text-muted-foreground mb-6">
-            We'll automatically check your inbox once per day for ticket confirmations and add them to your areyougo.ing timeline.
-            You can also sync manually anytime from the settings page.
-          </p>
-        ) : (
-          <p className="text-muted-foreground mb-6">
-            Use the "Sync Now" button on the settings page to pull your ticket confirmations into your areyougo.ing timeline.
-            You can enable automatic daily syncing anytime.
-          </p>
-        )}
-        <div className="flex gap-3 justify-center">
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="inline-flex items-center justify-center px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
-          >
-            Sync Settings
-          </button>
-          <a
-            href="https://areyougo.ing/dashboard"
-            className="inline-flex items-center justify-center px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
-          >
-            Go to Dashboard
-          </a>
-        </div>
+        <h2 className="font-semibold text-xl mb-2">Setup Complete!</h2>
+        <p className="text-muted-foreground">Loading sync settings...</p>
       </div>
     )
   }

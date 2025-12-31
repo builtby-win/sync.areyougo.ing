@@ -45,6 +45,13 @@ export const GET: APIRoute = async ({ request, url }) => {
       totalFound: session.totalFound,
       totalIngested: session.totalIngested,
       error: session.error,
+      // Progressive fetch tracking
+      currentSender: session.currentSender,
+      sendersCompleted: session.sendersCompleted,
+      sendersTotal: session.sendersTotal,
+      // Connection state tracking
+      connectionState: session.connectionState,
+      connectionError: session.connectionError,
     }),
     {
       status: 200,

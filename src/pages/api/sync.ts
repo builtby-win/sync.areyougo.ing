@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { APPROVED_SENDERS } from '../../lib/approved-senders'
 import { getDb } from '../../lib/db'
 import { fetchTicketEmails } from '../../lib/imap-client'
 import { imapCredentials, syncHistory } from '../../lib/schema'
@@ -8,12 +9,16 @@ import {
   cleanupSessions,
   createSession,
   getSession,
+  markSenderCompleted,
+  updateConnectionState,
+  updateCurrentSender,
   updateEmailStatus,
   updateSession,
 } from '../../lib/sync-sessions'
 import { verifySession } from '../../lib/verify-session'
 
 interface SyncRequest {
+  credentialId: string
   lookbackDays: number
   dryRun: boolean
 }
@@ -49,6 +54,7 @@ function extractEmailAddress(from: string): string {
 async function processSync(
   sessionId: string,
   cred: {
+    id: string
     userId: string
     userEmail: string
     host: string
@@ -66,8 +72,8 @@ async function processSync(
   const db = getDb()
 
   try {
-    // Fetch emails from approved senders
-    const emails = await fetchTicketEmails(
+    // Fetch emails from approved senders with progress callbacks
+    await fetchTicketEmails(
       {
         host: cred.host,
         port: cred.port,
@@ -77,27 +83,58 @@ async function processSync(
         lastSyncAt: cred.lastSyncAt,
       },
       encryptionKey,
-      { lookbackDays }
+      { lookbackDays },
+      {
+        onConnecting: () => {
+          console.log(`[sync:${sessionId}] Connecting...`)
+          updateConnectionState(sessionId, 'connecting')
+        },
+        onAuthenticating: () => {
+          console.log(`[sync:${sessionId}] Authenticating...`)
+          updateConnectionState(sessionId, 'authenticating')
+        },
+        onConnected: () => {
+          console.log(`[sync:${sessionId}] Connected!`)
+          updateConnectionState(sessionId, 'connected')
+        },
+        onConnectionError: (error) => {
+          console.error(`[sync:${sessionId}] Connection error:`, error)
+          updateConnectionState(sessionId, 'error', error.message)
+        },
+        onSenderStart: (sender) => {
+          console.log(`[sync:${sessionId}] Searching ${sender}...`)
+          updateCurrentSender(sessionId, sender)
+        },
+        onSenderComplete: (sender, emails) => {
+          console.log(`[sync:${sessionId}] Found ${emails.length} emails from ${sender}`)
+          markSenderCompleted(sessionId, sender)
+          // Add emails to session immediately for progressive display
+          for (const email of emails) {
+            addEmailToSession(sessionId, {
+              messageId: email.messageId,
+              from: email.from,
+              subject: email.subject,
+              date: email.date.toISOString(),
+              body: email.body,
+              ingestStatus: 'pending',
+            })
+          }
+        },
+        onError: (sender, error) => {
+          console.error(`[sync:${sessionId}] Error searching ${sender}:`, error)
+          markSenderCompleted(sessionId, sender)
+        },
+      }
     )
 
-    console.log(`[sync:${sessionId}] Found ${emails.length} ticket emails`)
-
-    // Add all emails to session with pending status
-    for (const email of emails) {
-      addEmailToSession(sessionId, {
-        messageId: email.messageId,
-        from: email.from,
-        subject: email.subject,
-        date: email.date.toISOString(),
-        body: email.body,
-        ingestStatus: 'pending',
-      })
-    }
-
+    // Clear current sender and move to ingesting
+    updateCurrentSender(sessionId, undefined)
     updateSession(sessionId, { status: 'ingesting' })
 
     // Ingest each email
     const session = getSession(sessionId)
+    console.log(`[sync:${sessionId}] Total: ${session?.totalFound || 0} ticket emails found`)
+
     if (!session) {
       throw new Error('Session not found')
     }
@@ -113,11 +150,12 @@ async function processSync(
             ...(ingestApiKey && { 'X-API-Key': ingestApiKey }),
           },
           body: JSON.stringify({
-            recipientEmail: cred.userEmail,
+            recipientEmail: cred.imapEmail,
             senderEmail: extractEmailAddress(email.from),
             subject: email.subject,
             body: email.body,
             emailDate: email.date,
+            userId: cred.userId,
           }),
         })
 
@@ -135,7 +173,7 @@ async function processSync(
       }
     }
 
-    // Update timestamps
+    // Update timestamps for this specific credential
     await db
       .update(imapCredentials)
       .set({
@@ -143,13 +181,14 @@ async function processSync(
         lastManualSyncAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(imapCredentials.userId, cred.userId))
+      .where(eq(imapCredentials.id, cred.id))
 
-    // Log to history
+    // Log to history with credentialId
     const finalSession = getSession(sessionId)!
     await db.insert(syncHistory).values({
       id: crypto.randomUUID(),
       userId: cred.userId,
+      credentialId: cred.id,
       status: finalSession.totalIngested === finalSession.totalFound ? 'success' : 'partial',
       emailsFound: finalSession.totalFound,
       emailsIngested: finalSession.totalIngested,
@@ -202,7 +241,14 @@ export const POST: APIRoute = async ({ request }) => {
 
     // Parse request body
     const body = (await request.json()) as SyncRequest
-    const { lookbackDays, dryRun } = body
+    const { credentialId, lookbackDays, dryRun } = body
+
+    if (!credentialId) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'credentialId is required' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
 
     if (typeof lookbackDays !== 'number' || lookbackDays < 1) {
       return new Response(
@@ -213,17 +259,17 @@ export const POST: APIRoute = async ({ request }) => {
 
     const db = getDb()
 
-    // Get user's IMAP credentials
+    // Get specific IMAP credential (must belong to user)
     const creds = await db
       .select()
       .from(imapCredentials)
-      .where(eq(imapCredentials.userId, user.id))
+      .where(and(eq(imapCredentials.id, credentialId), eq(imapCredentials.userId, user.id)))
       .limit(1)
 
     if (creds.length === 0) {
       return new Response(
-        JSON.stringify({ success: false, error: 'No IMAP credentials configured' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: false, error: 'Credential not found' }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } }
       )
     }
 
@@ -253,7 +299,7 @@ export const POST: APIRoute = async ({ request }) => {
       }
     }
 
-    console.log(`[sync] Fetching emails with ${lookbackDays} day lookback, dryRun=${dryRun}`)
+    console.log(`[sync] Fetching emails with ${lookbackDays} day lookback, dryRun=${dryRun}, credentialId=${credentialId}`)
 
     // If dry run, fetch and return preview synchronously
     if (dryRun) {
@@ -290,7 +336,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     // For real sync: create session and process asynchronously
     cleanupSessions()
-    const sessionId = createSession(user.id)
+    const sessionId = createSession(user.id, APPROVED_SENDERS.length)
 
     // Start async processing (don't await)
     processSync(sessionId, cred, encryptionKey, lookbackDays, mainAppUrl, ingestApiKey).catch(

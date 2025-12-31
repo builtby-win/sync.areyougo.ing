@@ -1,7 +1,7 @@
 ---
 import BaseLayout from '../layouts/base-layout.astro'
 import SetupWizard from '../components/setup-wizard'
-import SyncSettings from '../components/sync-settings'
+import AccountsList from '../components/accounts-list'
 import { verifySession } from '../lib/verify-session'
 import { getDb } from '../lib/db'
 import { imapCredentials } from '../lib/schema'
@@ -9,21 +9,35 @@ import { eq } from 'drizzle-orm'
 
 // Get environment and verify session
 const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
-const user = await verifySession(Astro.request, mainAppUrl)
+const isDev = process.env.NODE_ENV !== 'production'
+let user: Awaited<ReturnType<typeof verifySession>> = null
+let connectionError: string | null = null
 
-// Check if user already has credentials set up
-let existingCredentials: {
+try {
+  user = await verifySession(Astro.request, mainAppUrl)
+} catch (error) {
+  if (error instanceof Error && error.message.includes('Cannot connect to main app')) {
+    connectionError = error.message
+  } else {
+    throw error
+  }
+}
+
+// Check if user has any credentials set up
+let existingCredentials: Array<{
+  id: string
   provider: string
   imapEmail: string
   lastSyncAt: Date | null
   syncMode: string
   lastManualSyncAt: Date | null
-} | null = null
+}> = []
 
 if (user) {
   const db = getDb()
-  const result = await db
+  existingCredentials = await db
     .select({
+      id: imapCredentials.id,
       provider: imapCredentials.provider,
       imapEmail: imapCredentials.imapEmail,
       lastSyncAt: imapCredentials.lastSyncAt,
@@ -32,23 +46,18 @@ if (user) {
     })
     .from(imapCredentials)
     .where(eq(imapCredentials.userId, user.id))
-    .limit(1)
-
-  if (result.length > 0) {
-    existingCredentials = result[0]
-  }
+    .orderBy(imapCredentials.createdAt)
 }
 
 // Convert Date to timestamp for client components
-const credentialsForClient = existingCredentials
-  ? {
-      provider: existingCredentials.provider,
-      imapEmail: existingCredentials.imapEmail,
-      lastSyncAt: existingCredentials.lastSyncAt?.getTime() ? Math.floor(existingCredentials.lastSyncAt.getTime() / 1000) : null,
-      syncMode: existingCredentials.syncMode,
-      lastManualSyncAt: existingCredentials.lastManualSyncAt?.getTime() ? Math.floor(existingCredentials.lastManualSyncAt.getTime() / 1000) : null,
-    }
-  : null
+const accountsForClient = existingCredentials.map((cred) => ({
+  id: cred.id,
+  provider: cred.provider,
+  imapEmail: cred.imapEmail,
+  lastSyncAt: cred.lastSyncAt?.getTime() ? Math.floor(cred.lastSyncAt.getTime() / 1000) : null,
+  syncMode: cred.syncMode,
+  lastManualSyncAt: cred.lastManualSyncAt?.getTime() ? Math.floor(cred.lastManualSyncAt.getTime() / 1000) : null,
+}))
 ---
 
 <BaseLayout>
@@ -62,7 +71,27 @@ const credentialsForClient = existingCredentials
         </p>
       </div>
 
-      {!user ? (
+      {connectionError ? (
+        <!-- Connection Error -->
+        <div class="bg-destructive/10 border border-destructive/50 rounded-lg p-6 mb-6">
+          <div class="flex items-start gap-3">
+            <div class="text-2xl">X</div>
+            <div class="flex-1">
+              <h3 class="font-semibold text-destructive mb-2">Cannot Connect to Main App</h3>
+              <p class="text-sm text-muted-foreground mb-4">
+                The sync server (running in Docker) can't reach the main areyougo.ing app.
+              </p>
+              <div class="bg-background/50 rounded-md p-4 font-mono text-sm mb-4">
+                <div class="text-muted-foreground mb-2">Run this in the main app directory:</div>
+                <code class="text-foreground">cd ../areyougo.ing && pnpm dev:host</code>
+              </div>
+              <p class="text-xs text-muted-foreground">
+                The <code class="bg-muted px-1 py-0.5 rounded">--host</code> flag allows Docker containers to connect to your local development server.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : !user ? (
         <!-- Not logged in -->
         <div class="bg-card rounded-lg border border-border p-6 text-center">
           <p class="text-muted-foreground mb-4">
@@ -75,30 +104,13 @@ const credentialsForClient = existingCredentials
             Sign in to areyougo.ing
           </a>
         </div>
-      ) : credentialsForClient ? (
-        <!-- Has credentials - show sync settings -->
-        <SyncSettings
+      ) : accountsForClient.length > 0 ? (
+        <!-- Has accounts - show accounts list -->
+        <AccountsList
           client:load
           user={{ id: user.id, email: user.email, name: user.name }}
-          credentials={credentialsForClient}
-          onUpdateSettings={() => window.location.reload()}
+          accounts={accountsForClient}
         />
-        <div class="mt-4 text-center">
-          <button
-            type="button"
-            onclick="document.getElementById('change-settings').classList.toggle('hidden')"
-            class="text-sm text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Change email provider or credentials
-          </button>
-          <div id="change-settings" class="hidden mt-4">
-            <SetupWizard
-              client:load
-              user={{ id: user.id, email: user.email, name: user.name }}
-              existingCredentials={credentialsForClient}
-            />
-          </div>
-        </div>
       ) : (
         <!-- No credentials - show setup wizard -->
         <SetupWizard
@@ -112,11 +124,11 @@ const credentialsForClient = existingCredentials
       <div class="mt-8 p-4 bg-card/50 rounded-lg border border-border">
         <h3 class="font-semibold mb-2 text-sm">Privacy & Transparency</h3>
         <ul class="text-sm text-muted-foreground space-y-1">
-          <li>• Your password is encrypted and never logged</li>
-          <li>• We only read emails from <a href="https://github.com/builtby-win/sync.areyougo.ing/blob/main/src/lib/approved-senders.ts" target="_blank" class="text-primary hover:underline">approved ticket vendors</a></li>
-          <li>• Use an app-specific password (not your main password)</li>
-          <li>• You can delete your data anytime</li>
-          <li>• This code is <a href="https://github.com/builtby-win/sync.areyougo.ing" target="_blank" class="text-primary hover:underline">open source</a></li>
+          <li>* Your password is encrypted and never logged</li>
+          <li>* We only read emails from <a href="https://github.com/builtby-win/sync.areyougo.ing/blob/main/src/lib/approved-senders.ts" target="_blank" class="text-primary hover:underline">approved ticket vendors</a></li>
+          <li>* Use an app-specific password (not your main password)</li>
+          <li>* You can delete your data anytime</li>
+          <li>* This code is <a href="https://github.com/builtby-win/sync.areyougo.ing" target="_blank" class="text-primary hover:underline">open source</a></li>
         </ul>
       </div>
     </div>
