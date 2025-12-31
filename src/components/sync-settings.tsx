@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 
 interface User {
   id: string
@@ -28,6 +28,24 @@ interface LookbackOption {
   warning?: string
 }
 
+interface SyncEmail {
+  messageId: string
+  from: string
+  subject: string
+  date: string
+  body?: string
+  ingestStatus: 'pending' | 'sending' | 'success' | 'failed'
+  ingestError?: string
+}
+
+interface SyncStatus {
+  status: 'fetching' | 'ingesting' | 'completed' | 'failed'
+  emails: SyncEmail[]
+  totalFound: number
+  totalIngested: number
+  error?: string
+}
+
 const LOOKBACK_OPTIONS: LookbackOption[] = [
   { label: '1 month', days: 30 },
   { label: '6 months', days: 180 },
@@ -54,8 +72,20 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
   const [showLookbackSelector, setShowLookbackSelector] = useState(false)
   const [rateLimitedUntil, setRateLimitedUntil] = useState<Date | null>(null)
 
-  // Calculate if rate limited
+  // New state for progressive loading
+  const [syncSessionId, setSyncSessionId] = useState<string | null>(null)
+  const [syncEmails, setSyncEmails] = useState<SyncEmail[]>([])
+  const [syncStatus, setSyncStatus] = useState<SyncStatus['status'] | null>(null)
+
+  // Check if we're in development (Docker sets NODE_ENV=development)
+  const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+
+  // Calculate if rate limited (only in production)
   useEffect(() => {
+    if (isDev) {
+      setRateLimitedUntil(null)
+      return
+    }
     if (credentials.lastManualSyncAt) {
       const nextAvailable = new Date(credentials.lastManualSyncAt * 1000 + 24 * 60 * 60 * 1000)
       if (nextAvailable > new Date()) {
@@ -64,7 +94,37 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
         setRateLimitedUntil(null)
       }
     }
-  }, [credentials.lastManualSyncAt])
+  }, [credentials.lastManualSyncAt, isDev])
+
+  // Polling effect for sync status
+  useEffect(() => {
+    if (!syncSessionId) return
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/sync-status?sessionId=${syncSessionId}`)
+        if (response.ok) {
+          const data: SyncStatus = await response.json()
+          setSyncEmails(data.emails)
+          setSyncStatus(data.status)
+
+          if (data.status === 'completed' || data.status === 'failed') {
+            clearInterval(pollInterval)
+            setIsSyncing(false)
+            setSyncResult({ found: data.totalFound, ingested: data.totalIngested })
+            if (data.status === 'failed' && data.error) {
+              setSyncError(data.error)
+            }
+            onUpdateSettings()
+          }
+        }
+      } catch (error) {
+        console.error('Polling error:', error)
+      }
+    }, 1500)
+
+    return () => clearInterval(pollInterval)
+  }, [syncSessionId, onUpdateSettings])
 
   const handleSyncModeChange = async (newMode: SyncMode) => {
     if (newMode === syncMode) return
@@ -94,44 +154,62 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
     }
   }
 
-  const handleManualSync = async (dryRun = false) => {
-    setIsSyncing(true)
-    setSyncError(null)
-    setSyncResult(null)
+  const handleManualSync = useCallback(
+    async (dryRun = false) => {
+      setIsSyncing(true)
+      setSyncError(null)
+      setSyncResult(null)
+      setSyncEmails([])
+      setSyncSessionId(null)
+      setSyncStatus(null)
 
-    try {
-      const response = await fetch('/api/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lookbackDays, dryRun }),
-      })
+      try {
+        const response = await fetch('/api/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lookbackDays, dryRun }),
+        })
 
-      const data = await response.json()
+        const data = await response.json()
 
-      if (response.status === 429) {
-        setRateLimitedUntil(new Date(data.rateLimitedUntil))
-        setSyncError('Rate limited. You can sync manually once per 24 hours.')
-        return
+        if (response.status === 429) {
+          setRateLimitedUntil(new Date(data.rateLimitedUntil))
+          setSyncError('Rate limited. You can sync manually once per 24 hours.')
+          setIsSyncing(false)
+          return
+        }
+
+        if (!response.ok) {
+          setSyncError(data.error || 'Sync failed')
+          setIsSyncing(false)
+          return
+        }
+
+        if (dryRun) {
+          // Dry run returns emails directly
+          const emails: SyncEmail[] = (data.emails || []).map(
+            (e: { messageId: string; from: string; subject: string; date: string; body?: string }) => ({
+              ...e,
+              ingestStatus: 'pending' as const,
+            })
+          )
+          setSyncEmails(emails)
+          setSyncResult({ found: data.emailsFound || 0, ingested: 0 })
+          setIsSyncing(false)
+        } else {
+          // Real sync returns sessionId for polling
+          setSyncSessionId(data.sessionId)
+          setSyncStatus('fetching')
+        }
+      } catch {
+        setSyncError('Sync failed. Please try again.')
+        setIsSyncing(false)
+      } finally {
+        setShowLookbackSelector(false)
       }
-
-      if (!response.ok) {
-        setSyncError(data.error || 'Sync failed')
-        return
-      }
-
-      if (dryRun) {
-        setSyncResult({ found: data.emailsFound || 0, ingested: 0 })
-      } else {
-        setSyncResult({ found: data.emailsFound || 0, ingested: data.emailsIngested || 0 })
-        onUpdateSettings() // Refresh to get new lastSyncAt
-      }
-    } catch {
-      setSyncError('Sync failed. Please try again.')
-    } finally {
-      setIsSyncing(false)
-      setShowLookbackSelector(false)
-    }
-  }
+    },
+    [lookbackDays]
+  )
 
   const formatRelativeTime = (timestamp: number) => {
     const date = new Date(timestamp * 1000)
@@ -148,6 +226,15 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
   }
 
   const isRateLimited = rateLimitedUntil && rateLimitedUntil > new Date()
+
+  const getStatusMessage = () => {
+    if (syncStatus === 'fetching') return 'Fetching emails from your inbox...'
+    if (syncStatus === 'ingesting') return 'Sending to areyougo.ing...'
+    if (syncStatus === 'completed') return `Synced ${syncResult?.ingested || 0} of ${syncResult?.found || 0} emails`
+    if (syncStatus === 'failed') return 'Sync failed'
+    if (syncEmails.length > 0 && !syncStatus) return `Found ${syncEmails.length} ticket emails (preview)`
+    return null
+  }
 
   return (
     <div className="bg-card rounded-lg border border-border p-6 space-y-6">
@@ -217,11 +304,72 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
       )}
 
       {/* Success display */}
-      {syncResult && (
+      {syncResult && syncStatus === 'completed' && (
         <div className="p-3 bg-success/10 border border-success/20 rounded-md text-sm text-success">
           {syncResult.ingested > 0
-            ? `Synced ${syncResult.ingested} of ${syncResult.found} ticket emails.`
-            : `Found ${syncResult.found} ticket emails${syncResult.found > 0 ? ' (preview only)' : ''}.`}
+            ? `Synced ${syncResult.ingested} of ${syncResult.found} ticket emails to areyougo.ing.`
+            : `No new ticket emails found.`}
+        </div>
+      )}
+
+      {/* Email list during/after sync */}
+      {syncEmails.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">{getStatusMessage()}</h3>
+          <div className="bg-secondary/50 rounded-md border border-border divide-y divide-border max-h-64 overflow-y-auto">
+            {syncEmails.map((email) => (
+              <div key={email.messageId} className="p-3 text-sm flex items-start gap-2">
+                {/* Status indicator */}
+                <div className="flex-shrink-0 mt-0.5">
+                  {email.ingestStatus === 'pending' && (
+                    <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/30" />
+                  )}
+                  {email.ingestStatus === 'sending' && (
+                    <svg
+                      className="animate-spin h-4 w-4 text-primary"
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        className="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                      />
+                      <path
+                        className="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                      />
+                    </svg>
+                  )}
+                  {email.ingestStatus === 'success' && (
+                    <svg className="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                  {email.ingestStatus === 'failed' && (
+                    <svg className="w-4 h-4 text-destructive" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{email.subject}</div>
+                  <div className="text-muted-foreground text-xs mt-1 flex justify-between">
+                    <span className="truncate">{email.from}</span>
+                    <span className="ml-2 flex-shrink-0">{new Date(email.date).toLocaleDateString()}</span>
+                  </div>
+                  {email.ingestStatus === 'failed' && email.ingestError && (
+                    <div className="text-destructive text-xs mt-1 truncate">{email.ingestError}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -231,9 +379,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
 
         {showLookbackSelector ? (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              How far back should we look for ticket emails?
-            </p>
+            <p className="text-sm text-muted-foreground">How far back should we look for ticket emails?</p>
             <div className="grid grid-cols-2 gap-2">
               {LOOKBACK_OPTIONS.map((option) => (
                 <button
@@ -287,19 +433,16 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
                 {isSyncing ? 'Syncing...' : 'Sync Now'}
               </button>
             )}
-            <p className="text-xs text-muted-foreground mt-2">
-              Manual sync is available once per 24 hours.
-            </p>
+            {!isDev && (
+              <p className="text-xs text-muted-foreground mt-2">Manual sync is available once per 24 hours.</p>
+            )}
           </div>
         )}
       </div>
 
       {/* Dashboard link */}
       <div className="pt-2 border-t border-border">
-        <a
-          href="https://areyougo.ing/dashboard"
-          className="text-sm text-primary hover:underline"
-        >
+        <a href="https://areyougo.ing/dashboard" className="text-sm text-primary hover:underline">
           View your timeline on areyougo.ing →
         </a>
       </div>
