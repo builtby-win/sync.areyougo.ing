@@ -22,9 +22,9 @@
     }
   ],
 
-  // Cron trigger - every 15 minutes
+  // Cron trigger - daily at 6am UTC (only for users with auto-sync enabled)
   "triggers": {
-    "crons": ["*/15 * * * *"]
+    "crons": ["0 6 * * *"]
   },
 
   // Environment Variables (set in Cloudflare Dashboard)
@@ -34,5 +34,10 @@
 
   "observability": {
     "enabled": true
-  }
+  },
+
+  // Custom domain route
+  "routes": [
+    { "pattern": "sync.areyougo.ing/*", "zone_name": "areyougo.ing" }
+  ]
 }

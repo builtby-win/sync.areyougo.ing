@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "postinstall": "wrangler types",
-    "dev": "astro dev --port 4322",
+    "dev": "wrangler types && astro build && concurrently \"wrangler pages dev dist --port 5432\" \"astro build --watch\"",
     "build": "astro build",
     "preview": "wrangler pages dev dist",
     "deploy": "astro build && wrangler pages deploy dist --project-name sync-areyougoing",
@@ -44,7 +44,9 @@
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
+    "@builtby.win/configs": "^1.0.0",
     "@types/node": "^24.0.7",
+    "concurrently": "^9.1.2",
     "drizzle-kit": "^0.31.4",
     "tsx": "^4.20.3",
     "wrangler": "^4.13.2"

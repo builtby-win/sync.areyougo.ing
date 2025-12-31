@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { encryptPassword } from '../lib/encryption'
 
 interface User {
@@ -11,6 +11,13 @@ interface ExistingCredentials {
   provider: string
   imapEmail: string
   lastSyncAt: number | null
+  syncMode: string
+}
+
+interface EmailPreview {
+  from: string
+  subject: string
+  date: string
 }
 
 interface Props {
@@ -19,6 +26,7 @@ interface Props {
 }
 
 type Provider = 'icloud' | 'gmail' | 'yahoo' | 'outlook' | 'other'
+type SyncMode = 'manual' | 'auto_daily'
 
 interface ProviderConfig {
   name: string
@@ -93,7 +101,7 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
   },
 }
 
-type Step = 'provider' | 'instructions' | 'credentials' | 'testing' | 'success' | 'manage'
+type Step = 'provider' | 'instructions' | 'credentials' | 'testing' | 'preferences' | 'success' | 'manage'
 
 export default function SetupWizard({ user, existingCredentials }: Props) {
   const [step, setStep] = useState<Step>(existingCredentials ? 'manage' : 'provider')
@@ -105,6 +113,34 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [sampleEmails, setSampleEmails] = useState<EmailPreview[]>([])
+  const [syncMode, setSyncMode] = useState<SyncMode>('manual')
+  const [progressMessage, setProgressMessage] = useState<string>('')
+
+  // Cycle through progress messages while loading
+  useEffect(() => {
+    if (!isLoading) {
+      setProgressMessage('')
+      return
+    }
+
+    const messages = [
+      'Connecting to your email...',
+      'Establishing secure connection...',
+      'Authenticating...',
+      'Scanning for ticket emails...',
+      'Almost done...',
+    ]
+    let index = 0
+    setProgressMessage(messages[0])
+
+    const interval = setInterval(() => {
+      index = Math.min(index + 1, messages.length - 1)
+      setProgressMessage(messages[index])
+    }, 2000)
+
+    return () => clearInterval(interval)
+  }, [isLoading])
 
   const handleProviderSelect = (p: Provider) => {
     setProvider(p)
@@ -139,6 +175,8 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
         return
       }
 
+      // Store sample emails from approved senders
+      setSampleEmails(data.sampleEmails || [])
       setStep('testing')
     } catch {
       setError('Failed to test connection. Please try again.')
@@ -174,6 +212,7 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
           iv,
           host: host || PROVIDERS[provider].host,
           port: port || PROVIDERS[provider].port,
+          syncMode,
         }),
       })
 
@@ -453,12 +492,22 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
               {isLoading ? 'Testing...' : 'Test Connection'}
             </button>
           </div>
+
+          {isLoading && progressMessage && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+              <span>{progressMessage}</span>
+            </div>
+          )}
         </form>
       </div>
     )
   }
 
-  // Testing successful, confirm save
+  // Testing successful, show sample emails
   if (step === 'testing') {
     return (
       <div className="bg-card rounded-lg border border-border p-6">
@@ -480,9 +529,34 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
           </div>
         )}
 
-        <p className="text-sm text-muted-foreground mb-4">
-          Ready to save your credentials and start syncing ticket confirmations?
-        </p>
+        {/* Sample emails preview */}
+        {sampleEmails.length > 0 ? (
+          <div className="mb-6">
+            <h3 className="text-sm font-medium mb-2">Found {sampleEmails.length} ticket email{sampleEmails.length !== 1 ? 's' : ''} from the last 30 days:</h3>
+            <div className="bg-secondary/50 rounded-md border border-border divide-y divide-border max-h-64 overflow-y-auto">
+              {sampleEmails.map((email, i) => (
+                <div key={i} className="p-3 text-sm">
+                  <div className="font-medium truncate">{email.subject}</div>
+                  <div className="text-muted-foreground text-xs mt-1 flex justify-between">
+                    <span className="truncate">{email.from}</span>
+                    <span className="ml-2 flex-shrink-0">
+                      {new Date(email.date).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              These are the kinds of emails we'll sync to your areyougo.ing timeline.
+            </p>
+          </div>
+        ) : (
+          <div className="mb-6 p-4 bg-secondary/50 rounded-md">
+            <p className="text-sm text-muted-foreground">
+              No ticket emails found in the last 30 days. Don't worry — we'll still watch for new ones!
+            </p>
+          </div>
+        )}
 
         <div className="flex gap-3">
           <button
@@ -494,11 +568,89 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
           </button>
           <button
             type="button"
+            onClick={() => setStep('preferences')}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Sync preferences
+  if (step === 'preferences') {
+    return (
+      <div className="bg-card rounded-lg border border-border p-6">
+        <h2 className="font-semibold mb-4">Choose Your Sync Preferences</h2>
+
+        {error && (
+          <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md text-sm text-destructive mb-4">
+            {error}
+          </div>
+        )}
+
+        <div className="space-y-3 mb-6">
+          <label
+            className={`flex items-start gap-3 p-4 rounded-md border cursor-pointer transition-colors ${
+              syncMode === 'manual' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground'
+            }`}
+          >
+            <input
+              type="radio"
+              name="syncMode"
+              value="manual"
+              checked={syncMode === 'manual'}
+              onChange={() => setSyncMode('manual')}
+              className="mt-1"
+            />
+            <div>
+              <div className="font-medium">Manual Sync Only</div>
+              <p className="text-sm text-muted-foreground mt-1">
+                You control when to sync. Use the "Sync Now" button anytime to pull your latest ticket emails.
+                Great if you want to verify exactly what's being synced.
+              </p>
+            </div>
+          </label>
+
+          <label
+            className={`flex items-start gap-3 p-4 rounded-md border cursor-pointer transition-colors ${
+              syncMode === 'auto_daily' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground'
+            }`}
+          >
+            <input
+              type="radio"
+              name="syncMode"
+              value="auto_daily"
+              checked={syncMode === 'auto_daily'}
+              onChange={() => setSyncMode('auto_daily')}
+              className="mt-1"
+            />
+            <div>
+              <div className="font-medium">Auto-Sync Daily</div>
+              <p className="text-sm text-muted-foreground mt-1">
+                We'll automatically check for new ticket emails once per day (at 6am UTC).
+                You can still use manual sync anytime. You can change this later.
+              </p>
+            </div>
+          </label>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => setStep('testing')}
+            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+          >
+            Back
+          </button>
+          <button
+            type="button"
             onClick={handleSave}
             disabled={isLoading}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
           >
-            {isLoading ? 'Saving...' : 'Save & Start Syncing'}
+            {isLoading ? 'Saving...' : 'Save & Continue'}
           </button>
         </div>
       </div>
@@ -515,15 +667,32 @@ export default function SetupWizard({ user, existingCredentials }: Props) {
           </svg>
         </div>
         <h2 className="font-semibold text-xl mb-2">You're All Set!</h2>
-        <p className="text-muted-foreground mb-6">
-          We'll check your inbox every 15 minutes for ticket confirmations and add them to your areyougo.ing timeline.
-        </p>
-        <a
-          href="https://areyougo.ing/dashboard"
-          className="inline-flex items-center justify-center px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
-        >
-          Go to Dashboard
-        </a>
+        {syncMode === 'auto_daily' ? (
+          <p className="text-muted-foreground mb-6">
+            We'll automatically check your inbox once per day for ticket confirmations and add them to your areyougo.ing timeline.
+            You can also sync manually anytime from the settings page.
+          </p>
+        ) : (
+          <p className="text-muted-foreground mb-6">
+            Use the "Sync Now" button on the settings page to pull your ticket confirmations into your areyougo.ing timeline.
+            You can enable automatic daily syncing anytime.
+          </p>
+        )}
+        <div className="flex gap-3 justify-center">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="inline-flex items-center justify-center px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+          >
+            Sync Settings
+          </button>
+          <a
+            href="https://areyougo.ing/dashboard"
+            className="inline-flex items-center justify-center px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+          >
+            Go to Dashboard
+          </a>
+        </div>
       </div>
     )
   }

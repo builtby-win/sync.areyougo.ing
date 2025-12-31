@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../layouts/base-layout.astro'
 import SetupWizard from '../components/setup-wizard'
+import SyncSettings from '../components/sync-settings'
 import { verifySession } from '../lib/verify-session'
 import { getDb } from '../lib/db'
 import { imapCredentials } from '../lib/schema'
@@ -12,7 +13,14 @@ const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
 const user = await verifySession(Astro.request, mainAppUrl)
 
 // Check if user already has credentials set up
-let existingCredentials = null
+let existingCredentials: {
+  provider: string
+  imapEmail: string
+  lastSyncAt: Date | null
+  syncMode: string
+  lastManualSyncAt: Date | null
+} | null = null
+
 if (user) {
   const db = getDb(env)
   const result = await db
@@ -20,6 +28,8 @@ if (user) {
       provider: imapCredentials.provider,
       imapEmail: imapCredentials.imapEmail,
       lastSyncAt: imapCredentials.lastSyncAt,
+      syncMode: imapCredentials.syncMode,
+      lastManualSyncAt: imapCredentials.lastManualSyncAt,
     })
     .from(imapCredentials)
     .where(eq(imapCredentials.userId, user.id))
@@ -29,6 +39,17 @@ if (user) {
     existingCredentials = result[0]
   }
 }
+
+// Convert Date to timestamp for client components
+const credentialsForClient = existingCredentials
+  ? {
+      provider: existingCredentials.provider,
+      imapEmail: existingCredentials.imapEmail,
+      lastSyncAt: existingCredentials.lastSyncAt?.getTime() ? Math.floor(existingCredentials.lastSyncAt.getTime() / 1000) : null,
+      syncMode: existingCredentials.syncMode,
+      lastManualSyncAt: existingCredentials.lastManualSyncAt?.getTime() ? Math.floor(existingCredentials.lastManualSyncAt.getTime() / 1000) : null,
+    }
+  : null
 ---
 
 <BaseLayout>
@@ -55,12 +76,36 @@ if (user) {
             Sign in to areyougo.ing
           </a>
         </div>
+      ) : credentialsForClient ? (
+        <!-- Has credentials - show sync settings -->
+        <SyncSettings
+          client:load
+          user={{ id: user.id, email: user.email, name: user.name }}
+          credentials={credentialsForClient}
+          onUpdateSettings={() => window.location.reload()}
+        />
+        <div class="mt-4 text-center">
+          <button
+            type="button"
+            onclick="document.getElementById('change-settings').classList.toggle('hidden')"
+            class="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Change email provider or credentials
+          </button>
+          <div id="change-settings" class="hidden mt-4">
+            <SetupWizard
+              client:load
+              user={{ id: user.id, email: user.email, name: user.name }}
+              existingCredentials={credentialsForClient}
+            />
+          </div>
+        </div>
       ) : (
-        <!-- Logged in - show setup wizard -->
+        <!-- No credentials - show setup wizard -->
         <SetupWizard
           client:load
           user={{ id: user.id, email: user.email, name: user.name }}
-          existingCredentials={existingCredentials}
+          existingCredentials={null}
         />
       )}
 
