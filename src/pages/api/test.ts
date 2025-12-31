@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro'
 import { verifySession } from '../../lib/verify-session'
+import { fetchSampleEmails, type EmailPreview } from '../../lib/imap-client'
 
 interface TestRequest {
   provider: string
@@ -7,6 +8,13 @@ interface TestRequest {
   password: string
   host: string
   port: number
+}
+
+interface TestResponse {
+  success: boolean
+  message?: string
+  error?: string
+  sampleEmails?: EmailPreview[]
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -43,33 +51,56 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     console.log('[test] Testing connection to:', { provider, email, host, port })
 
-    // TODO: Implement actual IMAP connection test using cloudflare:sockets
-    // For now, we'll simulate a successful connection
-    // The actual implementation will use the imap-client.ts module
+    // Test connection and fetch sample emails from approved senders
+    const result = await fetchSampleEmails({
+      host,
+      port,
+      email,
+      password,
+    })
 
-    // Simulate connection test delay
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    console.log('[test] Connection test result:', {
+      success: result.success,
+      emailCount: result.emails?.length ?? 0,
+      elapsed: Date.now() - startTime,
+    })
 
-    // Basic validation - in production, this would actually connect to IMAP
-    if (!email.includes('@')) {
-      return new Response(JSON.stringify({ error: 'Invalid email format' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      })
+    if (!result.success) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: result.error || 'Connection failed',
+        } satisfies TestResponse),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
     }
 
-    console.log('[test] Connection test successful:', { elapsed: Date.now() - startTime })
-
-    return new Response(JSON.stringify({ success: true, message: 'Connection successful' }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return new Response(
+      JSON.stringify({
+        success: true,
+        message: 'Connection successful',
+        sampleEmails: result.emails || [],
+      } satisfies TestResponse),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
   } catch (error) {
     console.error('[test] Error:', error)
     console.error('[test] Stack:', error instanceof Error ? error.stack : 'none')
-    return new Response(JSON.stringify({ error: 'Connection test failed' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : 'Connection test failed',
+      } satisfies TestResponse),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
   }
 }

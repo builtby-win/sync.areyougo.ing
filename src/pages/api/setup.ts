@@ -11,6 +11,7 @@ interface SetupRequest {
   iv: string
   host: string
   port: number
+  syncMode?: 'manual' | 'auto_daily'
 }
 
 export const POST: APIRoute = async ({ request, locals }) => {
@@ -35,7 +36,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
 
     // Parse request body
     const body = (await request.json()) as SetupRequest
-    const { provider, email, encryptedPassword, iv, host, port } = body
+    const { provider, email, encryptedPassword, iv, host, port, syncMode } = body
 
     if (!provider || !email || !encryptedPassword || !iv || !host || !port) {
       console.log('[setup] Missing required fields')
@@ -45,7 +46,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
       })
     }
 
-    console.log('[setup] Saving credentials for:', { provider, email, host, port })
+    console.log('[setup] Saving credentials for:', { provider, email, host, port, syncMode })
 
     const db = getDb(env)
 
@@ -68,6 +69,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
           port,
           encryptedPassword,
           iv,
+          syncMode: syncMode || 'manual',
           updatedAt: new Date(),
         })
         .where(eq(imapCredentials.userId, user.id))
@@ -84,6 +86,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
         port,
         encryptedPassword,
         iv,
+        syncMode: syncMode || 'manual',
       })
     }
 

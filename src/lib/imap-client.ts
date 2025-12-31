@@ -4,7 +4,7 @@
  */
 
 import { connect } from 'cloudflare:sockets'
-import { APPROVED_SENDERS } from './approved-senders'
+import { APPROVED_SENDERS, isApprovedSender } from './approved-senders'
 import { decryptPassword } from './encryption'
 
 interface ImapCredentials {
@@ -14,6 +14,11 @@ interface ImapCredentials {
   encryptedPassword: string
   iv: string
   lastSyncAt: Date | null
+}
+
+interface FetchOptions {
+  /** Override the since date (for manual sync with custom lookback) */
+  lookbackDays?: number
 }
 
 interface Email {
@@ -80,29 +85,49 @@ async function sendCommand(
 export async function testConnection(
   credentials: Omit<ImapCredentials, 'lastSyncAt'> & { password: string }
 ): Promise<{ success: boolean; error?: string }> {
-  console.log('[imap-client] Testing connection to:', credentials.host)
+  console.log(`[imap-client] Connecting to ${credentials.host}:${credentials.port}...`)
 
+  // Add timeout for local dev where cloudflare:sockets may not work
+  const timeoutPromise = new Promise<{ success: false; error: string }>((resolve) =>
+    setTimeout(() => resolve({ success: false, error: 'Connection timed out. TCP sockets may not work in local development - try deploying to Cloudflare.' }), 15000)
+  )
+
+  const testPromise = testConnectionImpl(credentials)
+
+  return Promise.race([testPromise, timeoutPromise])
+}
+
+async function testConnectionImpl(
+  credentials: Omit<ImapCredentials, 'lastSyncAt'> & { password: string }
+): Promise<{ success: boolean; error?: string }> {
   try {
+    // Port 993 uses implicit TLS (connect with TLS immediately)
+    // Port 143 would use STARTTLS (upgrade plaintext to TLS)
+    const useImplicitTls = credentials.port === 993
+
     const socket = connect({
       hostname: credentials.host,
       port: credentials.port,
+      secureTransport: useImplicitTls ? 'on' : 'starttls',
     })
 
-    // Start TLS
-    const secureSocket = socket.startTls()
+    // For STARTTLS, upgrade after connecting; for implicit TLS, already secure
+    const secureSocket = useImplicitTls ? socket : socket.startTls()
+    console.log('[imap-client] TLS connection established')
 
     const reader = new ImapReader(secureSocket.readable.getReader())
     const writer = secureSocket.writable.getWriter()
 
     // Read greeting
     const greeting = await reader.readLine()
-    console.log('[imap-client] Server greeting:', greeting.slice(0, 50))
+    console.log('[imap-client] Server greeting received')
 
     if (!greeting.startsWith('* OK')) {
       return { success: false, error: 'Unexpected server greeting' }
     }
 
     // Login
+    console.log('[imap-client] Logging in...')
     const loginResponse = await sendCommand(
       writer,
       reader,
@@ -115,12 +140,13 @@ export async function testConnection(
       console.log('[imap-client] Login failed:', loginResult)
       return { success: false, error: 'Invalid credentials' }
     }
+    console.log('[imap-client] Login successful')
 
     // Logout
     await sendCommand(writer, reader, 'A002', 'LOGOUT')
 
     await writer.close()
-    console.log('[imap-client] Connection test successful')
+    console.log('[imap-client] Connection test complete')
 
     return { success: true }
   } catch (error) {
@@ -137,19 +163,25 @@ export async function testConnection(
  */
 export async function fetchTicketEmails(
   credentials: ImapCredentials,
-  encryptionKey: string
+  encryptionKey: string,
+  options?: FetchOptions
 ): Promise<Email[]> {
   console.log('[imap-client] Fetching emails from:', credentials.host)
 
   const password = await decryptPassword(credentials.encryptedPassword, credentials.iv, encryptionKey)
 
   try {
+    // Port 993 uses implicit TLS (connect with TLS immediately)
+    // Port 143 would use STARTTLS (upgrade plaintext to TLS)
+    const useImplicitTls = credentials.port === 993
+
     const socket = connect({
       hostname: credentials.host,
       port: credentials.port,
+      secureTransport: useImplicitTls ? 'on' : 'starttls',
     })
 
-    const secureSocket = socket.startTls()
+    const secureSocket = useImplicitTls ? socket : socket.startTls()
 
     const reader = new ImapReader(secureSocket.readable.getReader())
     const writer = secureSocket.writable.getWriter()
@@ -173,10 +205,16 @@ export async function fetchTicketEmails(
     const selectResponse = await sendCommand(writer, reader, 'A002', 'SELECT INBOX')
     console.log('[imap-client] Selected INBOX:', selectResponse.length, 'lines')
 
-    // Build search criteria
-    const sinceDate = credentials.lastSyncAt
-      ? formatImapDate(credentials.lastSyncAt)
-      : formatImapDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)) // Default: last 30 days
+    // Build search criteria - use lookbackDays if specified, otherwise lastSyncAt
+    let sinceDate: string
+    if (options?.lookbackDays) {
+      sinceDate = formatImapDate(new Date(Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000))
+      console.log(`[imap-client] Using lookback of ${options.lookbackDays} days`)
+    } else if (credentials.lastSyncAt) {
+      sinceDate = formatImapDate(credentials.lastSyncAt)
+    } else {
+      sinceDate = formatImapDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)) // Default: last 30 days
+    }
 
     // Search for emails from approved senders
     const emails: Email[] = []
@@ -293,4 +331,219 @@ async function fetchEmail(
 function formatImapDate(date: Date): string {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
   return `${date.getDate()}-${months[date.getMonth()]}-${date.getFullYear()}`
+}
+
+/**
+ * Sample email preview (headers only, no body)
+ */
+export interface EmailPreview {
+  from: string
+  subject: string
+  date: string
+}
+
+/**
+ * Fetch sample emails from approved senders (headers only) for preview.
+ * Used during connection test to show users what will be synced.
+ *
+ * New approach: Fetch last 100 emails and filter locally (faster than 24 SEARCH commands)
+ */
+export async function fetchSampleEmails(
+  credentials: Omit<ImapCredentials, 'lastSyncAt'> & { password: string },
+  maxEmails = 10
+): Promise<{ success: boolean; emails?: EmailPreview[]; error?: string }> {
+  console.log(`[imap-client] Connecting to ${credentials.host}:${credentials.port}...`)
+
+  // Add timeout for local dev where cloudflare:sockets may not work
+  const timeoutPromise = new Promise<{ success: false; error: string }>((resolve) =>
+    setTimeout(() => resolve({ success: false, error: 'Connection timed out. TCP sockets may not work in local development - try deploying to Cloudflare.' }), 15000)
+  )
+
+  const fetchPromise = fetchSampleEmailsImpl(credentials, maxEmails)
+
+  return Promise.race([fetchPromise, timeoutPromise])
+}
+
+async function fetchSampleEmailsImpl(
+  credentials: Omit<ImapCredentials, 'lastSyncAt'> & { password: string },
+  maxEmails: number
+): Promise<{ success: boolean; emails?: EmailPreview[]; error?: string }> {
+  try {
+    // Port 993 uses implicit TLS (connect with TLS immediately)
+    // Port 143 would use STARTTLS (upgrade plaintext to TLS)
+    const useImplicitTls = credentials.port === 993
+
+    const socket = connect({
+      hostname: credentials.host,
+      port: credentials.port,
+      secureTransport: useImplicitTls ? 'on' : 'starttls',
+    })
+
+    const secureSocket = useImplicitTls ? socket : socket.startTls()
+
+    const reader = new ImapReader(secureSocket.readable.getReader())
+    const writer = secureSocket.writable.getWriter()
+
+    // Read greeting
+    const greeting = await reader.readLine()
+    console.log('[imap-client] Server greeting received')
+    if (!greeting.startsWith('* OK')) {
+      return { success: false, error: 'Unexpected server greeting' }
+    }
+
+    // Login
+    console.log('[imap-client] Logging in...')
+    const loginResponse = await sendCommand(
+      writer,
+      reader,
+      'A001',
+      `LOGIN "${credentials.email}" "${credentials.password}"`
+    )
+
+    if (!loginResponse[loginResponse.length - 1].includes('OK')) {
+      return { success: false, error: 'Invalid credentials' }
+    }
+    console.log('[imap-client] Login successful')
+
+    // Select INBOX and get message count
+    console.log('[imap-client] Selecting INBOX...')
+    const selectResponse = await sendCommand(writer, reader, 'A002', 'SELECT INBOX')
+
+    // Parse message count from "* 1234 EXISTS" line
+    const existsLine = selectResponse.find((line) => line.includes(' EXISTS'))
+    const messageCount = existsLine ? parseInt(existsLine.replace('* ', '').replace(' EXISTS', ''), 10) : 0
+
+    console.log(`[imap-client] Found ${messageCount} total messages in INBOX`)
+
+    if (messageCount === 0) {
+      await sendCommand(writer, reader, 'A999', 'LOGOUT')
+      await writer.close()
+      return { success: true, emails: [] }
+    }
+
+    // Fetch headers for last 100 messages (or all if fewer)
+    const fetchCount = Math.min(100, messageCount)
+    const startMsg = Math.max(1, messageCount - fetchCount + 1)
+    const endMsg = messageCount
+
+    console.log(`[imap-client] Fetching headers for messages ${startMsg}:${endMsg}...`)
+
+    const fetchResponse = await sendCommand(
+      writer,
+      reader,
+      'A003',
+      `FETCH ${startMsg}:${endMsg} (BODY[HEADER.FIELDS (FROM SUBJECT DATE)])`
+    )
+
+    // Parse all email headers from response
+    const allEmails: EmailPreview[] = []
+    let currentHeaders: Record<string, string> = {}
+    let inHeaders = false
+
+    for (const line of fetchResponse) {
+      if (line.includes('FETCH') && line.includes('BODY[HEADER')) {
+        // Start of new message
+        if (Object.keys(currentHeaders).length > 0 && currentHeaders.from && currentHeaders.subject) {
+          allEmails.push({
+            from: currentHeaders.from,
+            subject: currentHeaders.subject,
+            date: currentHeaders.date || new Date().toISOString(),
+          })
+        }
+        currentHeaders = {}
+        inHeaders = true
+        continue
+      }
+
+      if (line === ')' || line.startsWith('A003')) {
+        // End of current message or end of response
+        if (Object.keys(currentHeaders).length > 0 && currentHeaders.from && currentHeaders.subject) {
+          allEmails.push({
+            from: currentHeaders.from,
+            subject: currentHeaders.subject,
+            date: currentHeaders.date || new Date().toISOString(),
+          })
+        }
+        currentHeaders = {}
+        inHeaders = false
+        continue
+      }
+
+      if (inHeaders && line.includes(':')) {
+        const colonIndex = line.indexOf(':')
+        const key = line.slice(0, colonIndex).toLowerCase().trim()
+        const value = line.slice(colonIndex + 1).trim()
+        currentHeaders[key] = value
+      }
+    }
+
+    console.log(`[imap-client] Parsed ${allEmails.length} email headers`)
+
+    // Filter for approved senders
+    console.log('[imap-client] Filtering for ticket vendors...')
+    const ticketEmails = allEmails.filter((email) => isApprovedSender(email.from))
+
+    console.log(`[imap-client] Found ${ticketEmails.length} ticket emails from approved senders`)
+
+    // Logout
+    await sendCommand(writer, reader, 'A999', 'LOGOUT')
+    await writer.close()
+
+    // Return up to maxEmails
+    return { success: true, emails: ticketEmails.slice(0, maxEmails) }
+  } catch (error) {
+    console.error('[imap-client] Sample fetch error:', error)
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Connection failed',
+    }
+  }
+}
+
+/**
+ * Fetch just headers for an email (for preview)
+ */
+async function fetchEmailHeaders(
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  reader: ImapReader,
+  messageId: string
+): Promise<EmailPreview | null> {
+  const tag = `H${messageId}`
+
+  const response = await sendCommand(
+    writer,
+    reader,
+    tag,
+    `FETCH ${messageId} (BODY[HEADER.FIELDS (FROM SUBJECT DATE)])`
+  )
+
+  const headers: Record<string, string> = {}
+  let inHeaders = false
+
+  for (const line of response) {
+    if (line.includes('BODY[HEADER')) {
+      inHeaders = true
+      continue
+    }
+    if (line.startsWith(tag) || line === ')') {
+      inHeaders = false
+    }
+
+    if (inHeaders && line.includes(':')) {
+      const colonIndex = line.indexOf(':')
+      const key = line.slice(0, colonIndex).toLowerCase().trim()
+      const value = line.slice(colonIndex + 1).trim()
+      headers[key] = value
+    }
+  }
+
+  if (!headers.from || !headers.subject) {
+    return null
+  }
+
+  return {
+    from: headers.from,
+    subject: headers.subject,
+    date: headers.date || new Date().toISOString(),
+  }
 }

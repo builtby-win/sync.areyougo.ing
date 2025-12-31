@@ -11,7 +11,9 @@ export const imapCredentials = sqliteTable('imap_credentials', {
   port: integer('port').notNull().default(993),
   encryptedPassword: text('encrypted_password').notNull(),
   iv: text('iv').notNull(), // AES-GCM initialization vector (base64)
-  lastSyncAt: integer('last_sync_at', { mode: 'timestamp' }),
+  syncMode: text('sync_mode').notNull().default('manual'), // 'manual' or 'auto_daily'
+  lastSyncAt: integer('last_sync_at', { mode: 'timestamp' }), // Last successful sync (manual or auto)
+  lastManualSyncAt: integer('last_manual_sync_at', { mode: 'timestamp' }), // For rate limiting manual syncs
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
     .$defaultFn(() => new Date()),

@@ -1,9 +1,11 @@
 /**
  * Cloudflare Worker entry point for cron job handling.
- * This runs every 15 minutes to fetch emails and POST to areyougo.ing/api/ingest.
+ * This runs daily at 6am UTC to fetch emails for users with auto-sync enabled
+ * and POST to areyougo.ing/api/ingest.
  */
 
 import { drizzle } from 'drizzle-orm/d1'
+import { eq } from 'drizzle-orm'
 import { imapCredentials, syncHistory } from './lib/schema'
 import { fetchTicketEmails } from './lib/imap-client'
 
@@ -16,15 +18,18 @@ interface Env {
 
 export default {
   /**
-   * Scheduled handler - runs on cron trigger
+   * Scheduled handler - runs on cron trigger (daily at 6am UTC)
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     console.log('[cron] Scheduled sync started at:', new Date(event.scheduledTime).toISOString())
 
     const db = drizzle(env.DB)
 
-    // Get all users with IMAP credentials
-    const credentials = await db.select().from(imapCredentials)
+    // Get only users with auto-sync enabled
+    const credentials = await db
+      .select()
+      .from(imapCredentials)
+      .where(eq(imapCredentials.syncMode, 'auto_daily'))
 
     console.log(`[cron] Found ${credentials.length} users to sync`)
 
@@ -88,10 +93,7 @@ export default {
         await db
           .update(imapCredentials)
           .set({ lastSyncAt: new Date(), updatedAt: new Date() })
-          .where(
-            // @ts-expect-error - drizzle types issue
-            imapCredentials.userId.eq(cred.userId)
-          )
+          .where(eq(imapCredentials.userId, cred.userId))
 
         // Log success
         await db.insert(syncHistory).values({
