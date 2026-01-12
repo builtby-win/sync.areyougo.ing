@@ -269,7 +269,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
       return 'Connecting to inbox...'
     }
     if (syncStatus === 'ingesting') return `Found ${syncEmails.length} ticket emails • Synced ${syncEmails.filter(e => e.ingestStatus === 'success').length}`
-    if (syncStatus === 'completed') return `Synced ${syncResult?.ingested || 0} of ${syncResult?.found || 0} emails`
+    if (syncStatus === 'completed') return `Synced ${syncResult?.ingested || 0} of ${syncResult?.found || 0} emails to areyougo.ing`
     if (syncStatus === 'failed') return 'Sync failed'
     if (syncEmails.length > 0 && !syncStatus) return `Found ${syncEmails.length} ticket emails (preview)`
     return null
@@ -342,12 +342,10 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
         </div>
       )}
 
-      {/* Success display */}
-      {syncResult && syncStatus === 'completed' && (
+      {/* Success display - only show when no emails to display (e.g., no emails found) */}
+      {syncResult && syncStatus === 'completed' && syncEmails.length === 0 && (
         <div className="p-3 bg-success/10 border border-success/20 rounded-md text-sm text-success">
-          {syncResult.ingested > 0
-            ? `Synced ${syncResult.ingested} of ${syncResult.found} ticket emails to areyougo.ing.`
-            : `No new ticket emails found.`}
+          No new ticket emails found.
         </div>
       )}
 

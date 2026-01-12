@@ -29,7 +29,6 @@ export async function verifySession(
 ): Promise<User | null> {
   const cookie = request.headers.get('cookie')
   if (!cookie) {
-    console.log('[verify-session] No cookie present')
     return null
   }
 

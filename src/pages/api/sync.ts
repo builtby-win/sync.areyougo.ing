@@ -139,31 +139,38 @@ async function processSync(
       throw new Error('Session not found')
     }
 
-    for (const email of session.emails) {
+    for (let i = 0; i < session.emails.length; i++) {
+      const email = session.emails[i]
+      console.log(`[sync:${sessionId}] Ingesting email ${i + 1}/${session.emails.length}: "${email.subject}" (${email.messageId})`)
       updateEmailStatus(sessionId, email.messageId, 'sending')
 
       try {
+        const payload = {
+          recipientEmail: cred.imapEmail,
+          senderEmail: extractEmailAddress(email.from),
+          subject: email.subject,
+          body: email.body,
+          emailDate: email.date,
+          userId: cred.userId,
+        }
+        console.log(`[sync:${sessionId}] POST ${mainAppUrl}/api/ingest - recipient: ${payload.recipientEmail}, sender: ${payload.senderEmail}`)
+
         const response = await fetch(`${mainAppUrl}/api/ingest`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(ingestApiKey && { 'X-API-Key': ingestApiKey }),
           },
-          body: JSON.stringify({
-            recipientEmail: cred.imapEmail,
-            senderEmail: extractEmailAddress(email.from),
-            subject: email.subject,
-            body: email.body,
-            emailDate: email.date,
-            userId: cred.userId,
-          }),
+          body: JSON.stringify(payload),
         })
 
         if (response.ok) {
+          const result = await response.json()
+          console.log(`[sync:${sessionId}] Ingest success for ${email.messageId}:`, result)
           updateEmailStatus(sessionId, email.messageId, 'success')
         } else {
           const errorText = await response.text()
-          console.error(`[sync:${sessionId}] Ingest failed for ${email.messageId}:`, errorText)
+          console.error(`[sync:${sessionId}] Ingest failed for ${email.messageId} (${response.status}):`, errorText)
           updateEmailStatus(sessionId, email.messageId, 'failed', errorText)
         }
       } catch (error) {
