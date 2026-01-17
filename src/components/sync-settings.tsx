@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 interface User {
   id: string
@@ -72,9 +72,15 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncError, setSyncError] = useState<string | null>(null)
   const [syncResult, setSyncResult] = useState<{ found: number; ingested: number } | null>(null)
+  const [localLastSyncAt, setLocalLastSyncAt] = useState<number | null>(credentials.lastSyncAt)
   const [lookbackDays, setLookbackDays] = useState(30)
   const [showLookbackSelector, setShowLookbackSelector] = useState(false)
   const [rateLimitedUntil, setRateLimitedUntil] = useState<Date | null>(null)
+
+  // Update local sync time when prop changes
+  useEffect(() => {
+    setLocalLastSyncAt(credentials.lastSyncAt)
+  }, [credentials.lastSyncAt])
 
   // New state for progressive loading
   const [syncSessionId, setSyncSessionId] = useState<string | null>(null)
@@ -127,7 +133,9 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
             if (data.status === 'failed' && data.error) {
               setSyncError(data.error)
             }
-            onUpdateSettings()
+            if (data.status === 'completed') {
+              setLocalLastSyncAt(Math.floor(Date.now() / 1000))
+            }
           }
         }
       } catch (error) {
@@ -203,10 +211,16 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
         if (dryRun) {
           // Dry run returns emails directly
           const emails: SyncEmail[] = (data.emails || []).map(
-            (e: { messageId: string; from: string; subject: string; date: string; body?: string }) => ({
+            (e: {
+              messageId: string
+              from: string
+              subject: string
+              date: string
+              body?: string
+            }) => ({
               ...e,
               ingestStatus: 'pending' as const,
-            })
+            }),
           )
           setSyncEmails(emails)
           setSyncResult({ found: data.emailsFound || 0, ingested: 0 })
@@ -223,7 +237,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
         setShowLookbackSelector(false)
       }
     },
-    [lookbackDays]
+    [lookbackDays],
   )
 
   const formatRelativeTime = (timestamp: number) => {
@@ -270,10 +284,13 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
       }
       return 'Connecting to inbox...'
     }
-    if (syncStatus === 'ingesting') return `Found ${syncEmails.length} ticket emails • Synced ${syncEmails.filter(e => e.ingestStatus === 'success').length}`
-    if (syncStatus === 'completed') return `Synced ${syncResult?.ingested || 0} of ${syncResult?.found || 0} emails to areyougo.ing`
+    if (syncStatus === 'ingesting')
+      return `Found ${syncEmails.length} ticket emails • Synced ${syncEmails.filter((e) => e.ingestStatus === 'success').length}`
+    if (syncStatus === 'completed')
+      return `Synced ${syncResult?.ingested || 0} of ${syncResult?.found || 0} emails to areyougo.ing`
     if (syncStatus === 'failed') return 'Sync failed'
-    if (syncEmails.length > 0 && !syncStatus) return `Found ${syncEmails.length} ticket emails (preview)`
+    if (syncEmails.length > 0 && !syncStatus)
+      return `Found ${syncEmails.length} ticket emails (preview)`
     return null
   }
 
@@ -282,22 +299,28 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
       {/* Header */}
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
-          <svg className="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg
+            className="w-5 h-5 text-success"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
         </div>
         <div>
           <h2 className="font-semibold">Email Sync Active</h2>
           <p className="text-sm text-muted-foreground">
-            {credentials.imapEmail} via {PROVIDER_NAMES[credentials.provider] || credentials.provider}
+            {credentials.imapEmail} via{' '}
+            {PROVIDER_NAMES[credentials.provider] || credentials.provider}
           </p>
         </div>
       </div>
 
       {/* Last sync info */}
-      {credentials.lastSyncAt && (
+      {localLastSyncAt && (
         <div className="text-sm text-muted-foreground">
-          Last synced: {formatRelativeTime(credentials.lastSyncAt)}
+          Last synced: {formatRelativeTime(localLastSyncAt)}
         </div>
       )}
 
@@ -346,15 +369,31 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
 
       {/* Success display - only show when no emails to display (e.g., no emails found) */}
       {syncResult && syncStatus === 'completed' && syncEmails.length === 0 && (
-        <div className="p-3 bg-success/10 border border-success/20 rounded-md text-sm text-success">
-          No new ticket emails found.
+        <div className="p-3 bg-success/10 border border-success/20 rounded-md text-sm flex items-center justify-between">
+          <span className="text-success">No new ticket emails found.</span>
+          <button
+            onClick={() => onUpdateSettings()}
+            className="text-xs text-success hover:underline font-medium"
+          >
+            Close & Refresh
+          </button>
         </div>
       )}
 
       {/* Email list during/after sync */}
       {syncEmails.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-medium">{getStatusMessage()}</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium">{getStatusMessage()}</h3>
+            {(syncStatus === 'completed' || syncStatus === 'failed') && (
+              <button
+                onClick={() => onUpdateSettings()}
+                className="text-xs text-primary hover:underline font-medium"
+              >
+                Close & Refresh
+              </button>
+            )}
+          </div>
           <div className="bg-secondary/50 rounded-md border border-border divide-y divide-border max-h-64 overflow-y-auto">
             {syncEmails.map((email) => (
               <div key={email.messageId} className="p-3 text-sm flex items-start gap-2">
@@ -386,13 +425,33 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
                     </svg>
                   )}
                   {email.ingestStatus === 'success' && (
-                    <svg className="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    <svg
+                      className="w-4 h-4 text-success"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M5 13l4 4L19 7"
+                      />
                     </svg>
                   )}
                   {email.ingestStatus === 'failed' && (
-                    <svg className="w-4 h-4 text-destructive" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    <svg
+                      className="w-4 h-4 text-destructive"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
                     </svg>
                   )}
                 </div>
@@ -400,10 +459,14 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
                   <div className="font-medium truncate">{email.subject}</div>
                   <div className="text-muted-foreground text-xs mt-1 flex justify-between">
                     <span className="truncate">{email.from}</span>
-                    <span className="ml-2 flex-shrink-0">{new Date(email.date).toLocaleDateString()}</span>
+                    <span className="ml-2 flex-shrink-0">
+                      {new Date(email.date).toLocaleDateString()}
+                    </span>
                   </div>
                   {email.ingestStatus === 'failed' && email.ingestError && (
-                    <div className="text-destructive text-xs mt-1">{formatIngestError(email.ingestError)}</div>
+                    <div className="text-destructive text-xs mt-1">
+                      {formatIngestError(email.ingestError)}
+                    </div>
                   )}
                 </div>
               </div>
@@ -418,7 +481,9 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
 
         {showLookbackSelector ? (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">How far back should we look for ticket emails?</p>
+            <p className="text-sm text-muted-foreground">
+              How far back should we look for ticket emails?
+            </p>
             <div className="grid grid-cols-2 gap-2">
               {LOOKBACK_OPTIONS.map((option) => (
                 <button
@@ -473,7 +538,9 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
               </button>
             )}
             {!isDev && (
-              <p className="text-xs text-muted-foreground mt-2">Manual sync is available once per 24 hours.</p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Manual sync is available once per 24 hours.
+              </p>
             )}
           </div>
         )}

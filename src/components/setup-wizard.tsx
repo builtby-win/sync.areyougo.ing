@@ -65,7 +65,7 @@ const Link = ({ href, children }: { href: string; children: React.ReactNode }) =
     href={href}
     target="_blank"
     rel="noopener noreferrer"
-    className="text-primary hover:underline"
+    className="text-blue-500 hover:text-blue-600 underline font-medium"
   >
     {children}
   </a>
