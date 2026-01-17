@@ -98,8 +98,10 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
   const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
 
   // Calculate if rate limited (only in production)
+  // NOTE: Set ENABLE_MANUAL_SYNC_RATE_LIMIT to true to re-enable the 24-hour blocker
+  const ENABLE_MANUAL_SYNC_RATE_LIMIT = false
   useEffect(() => {
-    if (isDev) {
+    if (!ENABLE_MANUAL_SYNC_RATE_LIMIT || isDev) {
       setRateLimitedUntil(null)
       return
     }
