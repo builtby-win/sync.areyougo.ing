@@ -43,6 +43,7 @@ interface SyncResponse {
 
 const RATE_LIMIT_HOURS = 24
 const IS_DEV = process.env.NODE_ENV !== 'production'
+const ENABLE_MANUAL_SYNC_RATE_LIMIT = false
 
 // Extract email address from "Name <email@domain.com>" format
 function extractEmailAddress(from: string): string {
@@ -283,7 +284,7 @@ export const POST: APIRoute = async ({ request }) => {
     const cred = creds[0]
 
     // Check rate limit (only for non-dry-run requests, and only in production)
-    if (!IS_DEV && !dryRun && cred.lastManualSyncAt) {
+    if (ENABLE_MANUAL_SYNC_RATE_LIMIT && !IS_DEV && !dryRun && cred.lastManualSyncAt) {
       const hoursSinceLastSync = (Date.now() - cred.lastManualSyncAt.getTime()) / (1000 * 60 * 60)
       if (hoursSinceLastSync < RATE_LIMIT_HOURS) {
         const retryAfter = new Date(
