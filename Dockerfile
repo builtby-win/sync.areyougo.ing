@@ -20,8 +20,7 @@ COPY . .
 RUN pnpm generate || true
 
 # Build the Astro application
-ENV GIT_COMMIT=$(git rev-parse HEAD)
-RUN pnpm build
+RUN GIT_COMMIT=$(git rev-parse HEAD) pnpm build
 
 # Production stage
 FROM node:20-alpine AS runner
