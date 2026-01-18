@@ -98,6 +98,7 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
   const [sendersCompleted, setSendersCompleted] = useState<number>(0)
   const [sendersTotal, setSendersTotal] = useState<number>(0)
   const [connectionState, setConnectionState] = useState<ConnectionState | undefined>()
+  const [rateLimitedUntil, setRateLimitedUntil] = useState<Date | null>(null)
 
   // Check if we're in development
   const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
