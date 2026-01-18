@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro'
 import { and, eq } from 'drizzle-orm'
 import { APPROVED_SENDERS } from '../../lib/approved-senders'
 import { getDb } from '../../lib/db'
+import { isLikelyTicketEmail } from '../../lib/email-filter'
 import { fetchTicketEmails } from '../../lib/imap-client'
 import { imapCredentials, syncHistory } from '../../lib/schema'
 import {
@@ -142,6 +143,14 @@ async function processSync(
 
     for (let i = 0; i < session.emails.length; i++) {
       const email = session.emails[i]
+
+      // Skip emails that don't look like ticket receipts
+      if (!isLikelyTicketEmail(email.subject)) {
+        console.log(`[sync:${sessionId}] Skipping non-ticket email: "${email.subject}" (${email.messageId})`)
+        updateEmailStatus(sessionId, email.messageId, 'skipped')
+        continue
+      }
+
       console.log(`[sync:${sessionId}] Ingesting email ${i + 1}/${session.emails.length}: "${email.subject}" (${email.messageId})`)
       updateEmailStatus(sessionId, email.messageId, 'sending')
 

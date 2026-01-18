@@ -6,6 +6,7 @@
 import cron from 'node-cron'
 import { eq } from 'drizzle-orm'
 import { getDb } from '../src/lib/db'
+import { isLikelyTicketEmail } from '../src/lib/email-filter'
 import { imapCredentials, syncHistory } from '../src/lib/schema'
 import { fetchTicketEmails } from '../src/lib/imap-client'
 
@@ -59,6 +60,12 @@ async function runSync(): Promise<void> {
 
       // POST each email to the main app's ingest endpoint
       for (const email of emails) {
+        // Skip emails that don't look like ticket receipts
+        if (!isLikelyTicketEmail(email.subject)) {
+          console.log(`[cron] Skipping non-ticket email: "${email.subject}" (${email.messageId})`)
+          continue
+        }
+
         try {
           const response = await fetch(`${mainAppUrl}/api/ingest`, {
             method: 'POST',
