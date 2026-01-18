@@ -13,6 +13,7 @@
     "astro": "astro",
     "generate": "drizzle-kit generate --config drizzle.config.ts",
     "migrate": "tsx scripts/migrate.ts",
+    "docker:build": "sh scripts/build-with-git-commit.sh",
     "typecheck": "astro check && tsc --noEmit",
     "format": "biome format --write .",
     "lint": "biome lint .",
@@ -54,8 +55,6 @@
     "drizzle-kit": "^0.31.4"
   },
   "pnpm": {
-    "onlyBuiltDependencies": [
-      "better-sqlite3"
-    ]
+    "onlyBuiltDependencies": ["better-sqlite3"]
   }
 }

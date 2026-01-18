@@ -3,8 +3,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install pnpm
-RUN corepack enable && corepack prepare pnpm@latest --activate
+# Install pnpm and git
+RUN apk add --no-cache git && \
+    corepack enable && corepack prepare pnpm@latest --activate
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
@@ -19,6 +20,7 @@ COPY . .
 RUN pnpm generate || true
 
 # Build the Astro application
+ENV GIT_COMMIT=$(git rev-parse HEAD)
 RUN pnpm build
 
 # Production stage

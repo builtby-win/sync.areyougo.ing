@@ -72,6 +72,21 @@
     color: var(--color-foreground);
     min-height: 100vh;
   }
+
+  a {
+    color: var(--color-primary);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 0.18em;
+  }
+
+  a:visited {
+    color: var(--color-primary);
+  }
+
+  a:hover {
+    color: var(--color-mist-50);
+  }
 }
 
 @keyframes slide-up {

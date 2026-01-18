@@ -5,7 +5,6 @@ node_modules
 dist
 
 # Development files
-.git
 .gitignore
 *.md
 .env*
