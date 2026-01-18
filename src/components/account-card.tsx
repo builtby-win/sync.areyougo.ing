@@ -31,14 +31,14 @@ interface LookbackOption {
 }
 
 interface SyncEmail {
-  messageId: string
-  from: string
-  subject: string
-  date: string
-  body?: string
-  ingestStatus: 'pending' | 'sending' | 'success' | 'failed'
-  ingestError?: string
-}
+   messageId: string
+   from: string
+   subject: string
+   date: string
+   body?: string
+   ingestStatus: 'pending' | 'sending' | 'success' | 'failed' | 'skipped'
+   ingestError?: string
+ }
 
 type ConnectionState = 'connecting' | 'authenticating' | 'connected' | 'error'
 
@@ -140,7 +140,9 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
           if (data.status === 'completed' || data.status === 'failed') {
             clearInterval(pollInterval)
             setIsSyncing(false)
-            setSyncResult({ found: data.totalFound, ingested: data.totalIngested })
+            // Count successful emails from the emails array
+            const successCount = data.emails.filter((e) => e.ingestStatus === 'success').length
+            setSyncResult({ found: data.totalFound, ingested: successCount })
             if (data.status === 'failed' && data.error) {
               setSyncError(data.error)
             }
@@ -324,10 +326,14 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
       if (connectionState === 'connected') return 'Connected! Starting search...'
       return 'Connecting to inbox...'
     }
-    if (syncStatus === 'ingesting')
-      return `Found ${syncEmails.length} ticket emails • Synced ${syncEmails.filter((e) => e.ingestStatus === 'success').length}`
+    if (syncStatus === 'ingesting') {
+      const successCount = syncEmails.filter((e) => e.ingestStatus === 'success').length
+      const sendingCount = syncEmails.filter((e) => e.ingestStatus === 'sending').length
+      const failedCount = syncEmails.filter((e) => e.ingestStatus === 'failed').length
+      return `Syncing: ${successCount} sent • ${sendingCount} in progress • ${failedCount} failed`
+    }
     if (syncStatus === 'completed')
-      return `Synced ${syncResult?.ingested || 0} of ${syncResult?.found || 0} emails to areyougo.ing`
+      return `Complete: ${syncResult?.ingested || 0} of ${syncResult?.found || 0} emails synced to areyougo.ing`
     if (syncStatus === 'failed') return 'Sync failed'
     if (syncEmails.length > 0 && !syncStatus)
       return `Found ${syncEmails.length} ticket emails (preview)`
@@ -566,8 +572,23 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
                       />
                     </svg>
                   )}
-                </div>
-                <div className="flex-1 min-w-0">
+                  {email.ingestStatus === 'skipped' && (
+                    <svg
+                      className="w-4 h-4 text-muted-foreground"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M12 8v4m0 4v.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                      />
+                    </svg>
+                  )}
+                  </div>
+                  <div className="flex-1 min-w-0">
                   <div className="font-medium truncate">{email.subject}</div>
                   <div className="text-muted-foreground text-xs mt-1 flex justify-between">
                     <span className="truncate">{email.from}</span>
@@ -580,7 +601,12 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
                       {formatIngestError(email.ingestError)}
                     </div>
                   )}
-                </div>
+                  {email.ingestStatus === 'skipped' && (
+                    <div className="text-muted-foreground text-xs mt-1">
+                      Not a ticket email
+                    </div>
+                  )}
+                  </div>
               </div>
             ))}
           </div>
