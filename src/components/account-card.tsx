@@ -84,6 +84,7 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
   const [localLastSyncAt, setLocalLastSyncAt] = useState<number | null>(credential.lastSyncAt)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showCompletionModal, setShowCompletionModal] = useState(false)
 
   // Update local sync time when prop changes
   useEffect(() => {
@@ -148,6 +149,9 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
             }
             if (data.status === 'completed') {
               setLocalLastSyncAt(Math.floor(Date.now() / 1000))
+              if (successCount > 0) {
+                setShowCompletionModal(true)
+              }
             }
           }
         }
@@ -596,14 +600,19 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
                       {new Date(email.date).toLocaleDateString()}
                     </span>
                   </div>
+                  {email.ingestStatus === 'success' && (
+                    <div className="text-success text-xs mt-1">
+                      Successfully synced to areyougo.ing
+                    </div>
+                  )}
                   {email.ingestStatus === 'failed' && email.ingestError && (
                     <div className="text-destructive text-xs mt-1">
                       {formatIngestError(email.ingestError)}
                     </div>
                   )}
                   {email.ingestStatus === 'skipped' && (
-                    <div className="text-muted-foreground text-xs mt-1">
-                      Not a ticket email
+                    <div className="text-yellow-600 text-xs mt-1">
+                      {email.ingestError ? formatIngestError(email.ingestError) : 'Not a ticket email'}
                     </div>
                   )}
                   </div>
@@ -683,6 +692,60 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
           </div>
         )}
       </div>
+
+      {/* Sync Completion Modal */}
+      {showCompletionModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
+                <svg
+                  className="w-5 h-5 text-success"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold">Sync Complete</h3>
+            </div>
+            <div className="mb-6 space-y-2 text-sm">
+              <p>
+                Found <strong>{syncResult?.found || 0}</strong> ticket emails.
+              </p>
+              <ul className="list-disc list-inside text-muted-foreground ml-2">
+                <li>Synced successfully: <strong>{syncResult?.ingested || 0}</strong></li>
+                {(syncResult?.found || 0) - (syncResult?.ingested || 0) > 0 && (
+                   <li>Failed: <strong>{(syncResult?.found || 0) - (syncResult?.ingested || 0)}</strong></li>
+                )}
+              </ul>
+              <p className="text-muted-foreground mt-2">
+                View your events on the dashboard or continue syncing more tickets.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowCompletionModal(false)}
+                className="flex-1 px-4 py-2 border border-border rounded-md font-medium hover:bg-secondary transition-colors"
+              >
+                Sync More
+              </button>
+              <a
+                href="https://areyougo.ing/dashboard?showSyncing=true"
+                className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity text-center"
+              >
+                View Dashboard
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
