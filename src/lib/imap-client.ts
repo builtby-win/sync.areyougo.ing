@@ -79,7 +79,7 @@ function createClient(host: string, port: number, email: string, password: strin
  * Test IMAP connection with given credentials
  */
 export async function testConnection(
-  credentials: Omit<ImapCredentials, 'lastSyncAt'> & { password: string }
+  credentials: Omit<ImapCredentials, 'lastSyncAt'> & { password: string },
 ): Promise<{ success: boolean; error?: string }> {
   console.log(`[imap-client] Testing connection to ${credentials.host}:${credentials.port}...`)
 
@@ -87,7 +87,7 @@ export async function testConnection(
     credentials.host,
     credentials.port,
     credentials.email,
-    credentials.password
+    credentials.password,
   )
 
   try {
@@ -110,15 +110,17 @@ export async function testConnection(
  */
 export async function fetchSampleEmails(
   credentials: Omit<ImapCredentials, 'lastSyncAt'> & { password: string },
-  maxEmails = 10
+  maxEmails = 10,
 ): Promise<{ success: boolean; emails?: EmailPreview[]; error?: string }> {
-  console.log(`[imap-client] Fetching sample emails from ${credentials.host}:${credentials.port}...`)
+  console.log(
+    `[imap-client] Fetching sample emails from ${credentials.host}:${credentials.port}...`,
+  )
 
   const client = createClient(
     credentials.host,
     credentials.port,
     credentials.email,
-    credentials.password
+    credentials.password,
   )
 
   try {
@@ -183,16 +185,16 @@ export async function fetchTicketEmails(
   encryptionKey: string,
   options?: FetchOptions,
   progress?: FetchProgressCallback,
-  plaintextPassword?: string
+  plaintextPassword?: string,
 ): Promise<Email[]> {
-  console.log(`[imap-client] Fetching ticket emails from ${credentials.host}:${credentials.port}...`)
+  console.log(
+    `[imap-client] Fetching ticket emails from ${credentials.host}:${credentials.port}...`,
+  )
 
   // Use plaintext password if provided, otherwise decrypt
-  const password = plaintextPassword || await decryptPassword(
-    credentials.encryptedPassword,
-    credentials.iv,
-    encryptionKey
-  )
+  const password =
+    plaintextPassword ||
+    (await decryptPassword(credentials.encryptedPassword, credentials.iv, encryptionKey))
 
   const client = createClient(credentials.host, credentials.port, credentials.email, password)
 
@@ -270,7 +272,11 @@ export async function fetchTicketEmails(
           } else if (results instanceof Set) {
             resultArray = Array.from(results)
           } else {
-            console.warn(`[imap-client] Unexpected search result type for ${sender}:`, typeof results, results)
+            console.warn(
+              `[imap-client] Unexpected search result type for ${sender}:`,
+              typeof results,
+              results,
+            )
             progress?.onSenderComplete(sender, [])
             continue
           }
@@ -319,7 +325,10 @@ export async function fetchTicketEmails(
           progress?.onSenderComplete(sender, senderEmails)
         } catch (searchError) {
           console.error(`[imap-client] Error searching for ${sender}:`, searchError)
-          progress?.onError(sender, searchError instanceof Error ? searchError : new Error(String(searchError)))
+          progress?.onError(
+            sender,
+            searchError instanceof Error ? searchError : new Error(String(searchError)),
+          )
           // Continue with other senders
         }
       }

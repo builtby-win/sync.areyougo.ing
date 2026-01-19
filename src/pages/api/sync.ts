@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro'
 import { and, eq } from 'drizzle-orm'
 import { APPROVED_SENDERS } from '../../lib/approved-senders'
 import { getDb } from '../../lib/db'
-import { isLikelyTicketEmail } from '../../lib/email-filter'
+import { shouldProcessEmail } from '../../lib/email-filter'
 import { fetchTicketEmails } from '../../lib/imap-client'
 import { imapCredentials, syncHistory } from '../../lib/schema'
 import {
@@ -69,7 +69,7 @@ async function processSync(
   encryptionKey: string,
   lookbackDays: number,
   mainAppUrl: string,
-  ingestApiKey: string | undefined
+  ingestApiKey: string | undefined,
 ) {
   const db = getDb()
 
@@ -109,11 +109,13 @@ async function processSync(
         },
         onSenderComplete: (sender, emails) => {
           // Filter out non-ticket emails
-          const ticketEmails = emails.filter((e) => isLikelyTicketEmail(e.subject))
-          
-          console.log(`[sync:${sessionId}] Found ${emails.length} emails from ${sender} (${ticketEmails.length} tickets)`)
+          const ticketEmails = emails.filter((e) => shouldProcessEmail(e.subject, e.from))
+
+          console.log(
+            `[sync:${sessionId}] Found ${emails.length} emails from ${sender} (${ticketEmails.length} tickets)`,
+          )
           markSenderCompleted(sessionId, sender)
-          
+
           // Add emails to session immediately for progressive display
           for (const email of ticketEmails) {
             addEmailToSession(sessionId, {
@@ -130,7 +132,7 @@ async function processSync(
           console.error(`[sync:${sessionId}] Error searching ${sender}:`, error)
           markSenderCompleted(sessionId, sender)
         },
-      }
+      },
     )
 
     // Clear current sender and move to ingesting
@@ -148,7 +150,9 @@ async function processSync(
     for (let i = 0; i < session.emails.length; i++) {
       const email = session.emails[i]
 
-      console.log(`[sync:${sessionId}] Ingesting email ${i + 1}/${session.emails.length}: "${email.subject}" (${email.messageId})`)
+      console.log(
+        `[sync:${sessionId}] Ingesting email ${i + 1}/${session.emails.length}: "${email.subject}" (${email.messageId})`,
+      )
       updateEmailStatus(sessionId, email.messageId, 'sending')
 
       try {
@@ -160,7 +164,9 @@ async function processSync(
           emailDate: email.date,
           userId: cred.userId,
         }
-        console.log(`[sync:${sessionId}] POST ${mainAppUrl}/api/ingest - recipient: ${payload.recipientEmail}, sender: ${payload.senderEmail}`)
+        console.log(
+          `[sync:${sessionId}] POST ${mainAppUrl}/api/ingest - recipient: ${payload.recipientEmail}, sender: ${payload.senderEmail}`,
+        )
 
         const response = await fetch(`${mainAppUrl}/api/ingest`, {
           method: 'POST',
@@ -177,7 +183,10 @@ async function processSync(
           updateEmailStatus(sessionId, email.messageId, 'success')
         } else {
           const errorText = await response.text()
-          console.error(`[sync:${sessionId}] Ingest failed for ${email.messageId} (${response.status}):`, errorText)
+          console.error(
+            `[sync:${sessionId}] Ingest failed for ${email.messageId} (${response.status}):`,
+            errorText,
+          )
           updateEmailStatus(sessionId, email.messageId, 'failed', errorText)
         }
       } catch (error) {
@@ -212,7 +221,7 @@ async function processSync(
 
     updateSession(sessionId, { status: 'completed', completedAt: new Date() })
     console.log(
-      `[sync:${sessionId}] Complete: ${finalSession.totalIngested}/${finalSession.totalFound} ingested`
+      `[sync:${sessionId}] Complete: ${finalSession.totalIngested}/${finalSession.totalFound} ingested`,
     )
   } catch (error) {
     console.error(`[sync:${sessionId}] Error:`, error)
@@ -234,10 +243,10 @@ export const POST: APIRoute = async ({ request }) => {
 
   if (!encryptionKey) {
     console.error('[sync] ENCRYPTION_KEY not configured')
-    return new Response(
-      JSON.stringify({ success: false, error: 'Server configuration error' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    )
+    return new Response(JSON.stringify({ success: false, error: 'Server configuration error' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 
   try {
@@ -258,17 +267,17 @@ export const POST: APIRoute = async ({ request }) => {
     const { credentialId, lookbackDays, dryRun } = body
 
     if (!credentialId) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'credentialId is required' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ success: false, error: 'credentialId is required' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     if (typeof lookbackDays !== 'number' || lookbackDays < 1) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Invalid lookbackDays' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ success: false, error: 'Invalid lookbackDays' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     const db = getDb()
@@ -281,10 +290,10 @@ export const POST: APIRoute = async ({ request }) => {
       .limit(1)
 
     if (creds.length === 0) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Credential not found' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ success: false, error: 'Credential not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     const cred = creds[0]
@@ -294,7 +303,7 @@ export const POST: APIRoute = async ({ request }) => {
       const hoursSinceLastSync = (Date.now() - cred.lastManualSyncAt.getTime()) / (1000 * 60 * 60)
       if (hoursSinceLastSync < RATE_LIMIT_HOURS) {
         const retryAfter = new Date(
-          cred.lastManualSyncAt.getTime() + RATE_LIMIT_HOURS * 60 * 60 * 1000
+          cred.lastManualSyncAt.getTime() + RATE_LIMIT_HOURS * 60 * 60 * 1000,
         )
         return new Response(
           JSON.stringify({
@@ -308,12 +317,14 @@ export const POST: APIRoute = async ({ request }) => {
               'Content-Type': 'application/json',
               'Retry-After': Math.ceil((RATE_LIMIT_HOURS - hoursSinceLastSync) * 3600).toString(),
             },
-          }
+          },
         )
       }
     }
 
-    console.log(`[sync] Fetching emails with ${lookbackDays} day lookback, dryRun=${dryRun}, credentialId=${credentialId}`)
+    console.log(
+      `[sync] Fetching emails with ${lookbackDays} day lookback, dryRun=${dryRun}, credentialId=${credentialId}`,
+    )
 
     // If dry run, fetch and return preview synchronously
     if (dryRun) {
@@ -327,7 +338,7 @@ export const POST: APIRoute = async ({ request }) => {
           lastSyncAt: cred.lastSyncAt,
         },
         encryptionKey,
-        { lookbackDays }
+        { lookbackDays },
       )
 
       const emailsForIngest: EmailForIngest[] = emails.map((email) => ({
@@ -344,7 +355,7 @@ export const POST: APIRoute = async ({ request }) => {
           emails: emailsForIngest,
           emailsFound: emails.length,
         } satisfies SyncResponse),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
     }
 
@@ -361,7 +372,7 @@ export const POST: APIRoute = async ({ request }) => {
           error: err instanceof Error ? err.message : 'Sync failed',
           completedAt: new Date(),
         })
-      }
+      },
     )
 
     // Return immediately with sessionId for polling
@@ -371,7 +382,7 @@ export const POST: APIRoute = async ({ request }) => {
         sessionId,
         message: 'Sync started',
       }),
-      { status: 202, headers: { 'Content-Type': 'application/json' } }
+      { status: 202, headers: { 'Content-Type': 'application/json' } },
     )
   } catch (error) {
     console.error('[sync] Error:', error)
@@ -380,7 +391,7 @@ export const POST: APIRoute = async ({ request }) => {
         success: false,
         error: error instanceof Error ? error.message : 'Sync failed',
       } satisfies SyncResponse),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
     )
   }
 }

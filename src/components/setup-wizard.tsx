@@ -77,11 +77,13 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     host: 'imap.mail.me.com',
     port: 993,
     instructions: [
-      <>Go to <Link href="https://appleid.apple.com">appleid.apple.com</Link> and sign in</>,
-      <>Go to "Sign-In and Security" → "App-Specific Passwords"</>,
-      <>Click "Generate an app-specific password"</>,
-      <>Name it "areyougo.ing" and click Create</>,
-      <>Copy the password shown (you won't see it again)</>,
+      <span key="i1">
+        Go to <Link href="https://appleid.apple.com">appleid.apple.com</Link> and sign in
+      </span>,
+      <span key="i2">Go to "Sign-In and Security" → "App-Specific Passwords"</span>,
+      <span key="i3">Click "Generate an app-specific password"</span>,
+      <span key="i4">Name it "areyougo.ing" and click Create</span>,
+      <span key="i5">Copy the password shown (you won't see it again)</span>,
     ],
     helpUrl: 'https://support.apple.com/en-us/102654',
   },
@@ -90,11 +92,16 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     host: 'imap.gmail.com',
     port: 993,
     instructions: [
-      <>Go to <Link href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</Link></>,
-      <>Sign in if prompted</>,
-      <>Select "Mail" as the app and your device</>,
-      <>Click "Generate"</>,
-      <>Copy the 16-character password shown</>,
+      <span key="g1">
+        Go to{' '}
+        <Link href="https://myaccount.google.com/apppasswords">
+          myaccount.google.com/apppasswords
+        </Link>
+      </span>,
+      <span key="g2">Sign in if prompted</span>,
+      <span key="g3">Select "Mail" as the app and your device</span>,
+      <span key="g4">Click "Generate"</span>,
+      <span key="g5">Copy the 16-character password shown</span>,
     ],
     helpUrl: 'https://support.google.com/accounts/answer/185833',
   },
@@ -103,11 +110,16 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     host: 'imap.mail.yahoo.com',
     port: 993,
     instructions: [
-      <>Go to <Link href="https://login.yahoo.com/account/security">login.yahoo.com/account/security</Link></>,
-      <>Scroll to "Generate app password"</>,
-      <>Select "Other App" and enter "areyougo.ing"</>,
-      <>Click "Generate"</>,
-      <>Copy the password shown</>,
+      <span key="y1">
+        Go to{' '}
+        <Link href="https://login.yahoo.com/account/security">
+          login.yahoo.com/account/security
+        </Link>
+      </span>,
+      <span key="y2">Scroll to "Generate app password"</span>,
+      <span key="y3">Select "Other App" and enter "areyougo.ing"</span>,
+      <span key="y4">Click "Generate"</span>,
+      <span key="y5">Copy the password shown</span>,
     ],
     helpUrl: 'https://help.yahoo.com/kb/SLN15241.html',
   },
@@ -116,27 +128,38 @@ const PROVIDERS: Record<Provider, ProviderConfig> = {
     host: 'outlook.office365.com',
     port: 993,
     instructions: [
-      <>Go to <Link href="https://account.microsoft.com/security">account.microsoft.com/security</Link></>,
-      <>Click "Advanced security options"</>,
-      <>Under "App passwords", click "Create a new app password"</>,
-      <>Copy the password shown</>,
+      <span key="o1">
+        Go to{' '}
+        <Link href="https://account.microsoft.com/security">account.microsoft.com/security</Link>
+      </span>,
+      <span key="o2">Click "Advanced security options"</span>,
+      <span key="o3">Under "App passwords", click "Create a new app password"</span>,
+      <span key="o4">Copy the password shown</span>,
     ],
-    helpUrl: 'https://support.microsoft.com/en-us/account-billing/using-app-passwords-with-apps-that-don-t-support-two-step-verification-5896ed9b-4263-e681-128a-a6f2979a7944',
+    helpUrl:
+      'https://support.microsoft.com/en-us/account-billing/using-app-passwords-with-apps-that-don-t-support-two-step-verification-5896ed9b-4263-e681-128a-a6f2979a7944',
   },
   other: {
     name: 'Other Provider',
     host: '',
     port: 993,
     instructions: [
-      <>Find your email provider's IMAP settings</>,
-      <>Generate an app-specific password if available</>,
-      <>Enter the IMAP server hostname and port below</>,
+      <span key="oth1">Find your email provider's IMAP settings</span>,
+      <span key="oth2">Generate an app-specific password if available</span>,
+      <span key="oth3">Enter the IMAP server hostname and port below</span>,
     ],
     helpUrl: '',
   },
 }
 
-type Step = 'provider' | 'instructions' | 'credentials' | 'testing' | 'preferences' | 'success' | 'manage'
+type Step =
+  | 'provider'
+  | 'instructions'
+  | 'credentials'
+  | 'testing'
+  | 'preferences'
+  | 'success'
+  | 'manage'
 
 export default function SetupWizard({ user, existingCredentials, onComplete, onCancel }: Props) {
   const [step, setStep] = useState<Step>(existingCredentials ? 'manage' : 'provider')
@@ -359,14 +382,26 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
       <div className="bg-card rounded-lg border border-border p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
-            <svg className="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            <svg
+              className="w-5 h-5 text-success"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
             </svg>
           </div>
           <div>
             <h2 className="font-semibold">Email Sync Active</h2>
             <p className="text-sm text-muted-foreground">
-              Syncing {existingCredentials.imapEmail} via {PROVIDERS[existingCredentials.provider as Provider]?.name || existingCredentials.provider}
+              Syncing {existingCredentials.imapEmail} via{' '}
+              {PROVIDERS[existingCredentials.provider as Provider]?.name ||
+                existingCredentials.provider}
             </p>
           </div>
         </div>
@@ -506,7 +541,13 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
           </div>
         )}
 
-        <form onSubmit={(e) => { e.preventDefault(); handleTestConnection(); }} className="space-y-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            handleTestConnection()
+          }}
+          className="space-y-4"
+        >
           <div>
             <label htmlFor="email" className="block text-sm font-medium mb-1">
               Email Address
@@ -599,9 +640,25 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
 
           {isLoading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              <svg
+                className="animate-spin h-4 w-4"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                />
               </svg>
               <span>{getProgressMessage()}</span>
             </div>
@@ -617,8 +674,18 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
       <div className="bg-card rounded-lg border border-border p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 rounded-full bg-success/20 flex items-center justify-center">
-            <svg className="w-5 h-5 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            <svg
+              className="w-5 h-5 text-success"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
             </svg>
           </div>
           <div>
@@ -636,7 +703,10 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
         {/* Sample emails preview */}
         {sampleEmails.length > 0 ? (
           <div className="mb-6">
-            <h3 className="text-sm font-medium mb-2">Found {sampleEmails.length} ticket email{sampleEmails.length !== 1 ? 's' : ''} from the last 30 days:</h3>
+            <h3 className="text-sm font-medium mb-2">
+              Found {sampleEmails.length} ticket email{sampleEmails.length !== 1 ? 's' : ''} from
+              the last 30 days:
+            </h3>
             <div className="bg-secondary/50 rounded-md border border-border divide-y divide-border max-h-64 overflow-y-auto">
               {sampleEmails.map((email, i) => (
                 <div key={i} className="p-3 text-sm">
@@ -657,7 +727,8 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
         ) : (
           <div className="mb-6 p-4 bg-secondary/50 rounded-md">
             <p className="text-sm text-muted-foreground">
-              No ticket emails found in the last 30 days. Don't worry — we'll still watch for new ones!
+              No ticket emails found in the last 30 days. Don't worry — we'll still watch for new
+              ones!
             </p>
           </div>
         )}
@@ -697,7 +768,9 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
         <div className="space-y-3 mb-6">
           <label
             className={`flex items-start gap-3 p-4 rounded-md border cursor-pointer transition-colors ${
-              syncMode === 'manual' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground'
+              syncMode === 'manual'
+                ? 'border-primary bg-primary/5'
+                : 'border-border hover:border-muted-foreground'
             }`}
           >
             <input
@@ -711,15 +784,17 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
             <div>
               <div className="font-medium">Manual Sync Only</div>
               <p className="text-sm text-muted-foreground mt-1">
-                You control when to sync. Use the "Sync Now" button anytime to pull your latest ticket emails.
-                Great if you want to verify exactly what's being synced.
+                You control when to sync. Use the "Sync Now" button anytime to pull your latest
+                ticket emails. Great if you want to verify exactly what's being synced.
               </p>
             </div>
           </label>
 
           <label
             className={`flex items-start gap-3 p-4 rounded-md border cursor-pointer transition-colors ${
-              syncMode === 'auto_daily' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground'
+              syncMode === 'auto_daily'
+                ? 'border-primary bg-primary/5'
+                : 'border-border hover:border-muted-foreground'
             }`}
           >
             <input
@@ -733,8 +808,8 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
             <div>
               <div className="font-medium">Auto-Sync Daily</div>
               <p className="text-sm text-muted-foreground mt-1">
-                We'll automatically check for new ticket emails once per day (at 6am UTC).
-                You can still use manual sync anytime. You can change this later.
+                We'll automatically check for new ticket emails once per day (at 6am UTC). You can
+                still use manual sync anytime. You can change this later.
               </p>
             </div>
           </label>
@@ -769,8 +844,19 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
       <div className="bg-card rounded-lg border border-border p-6 text-center">
         <div className="w-16 h-16 rounded-full bg-success/20 flex items-center justify-center mx-auto mb-4">
           <svg className="animate-spin w-8 h-8 text-primary" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            />
           </svg>
         </div>
         <h2 className="font-semibold text-xl mb-2">Setup Complete!</h2>

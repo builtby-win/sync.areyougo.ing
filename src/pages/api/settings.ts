@@ -61,7 +61,7 @@ export const GET: APIRoute = async ({ request }) => {
           imapEmail: cred.imapEmail,
         })),
       } satisfies SettingsResponse),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
     )
   } catch (error) {
     console.error('[settings] GET error:', error)
@@ -70,7 +70,7 @@ export const GET: APIRoute = async ({ request }) => {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to fetch settings',
       }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
     )
   }
 }
@@ -94,17 +94,20 @@ export const PATCH: APIRoute = async ({ request }) => {
     const { credentialId, syncMode } = body
 
     if (!credentialId) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'credentialId is required' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ success: false, error: 'credentialId is required' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     // Validate syncMode
     if (!['manual', 'auto_daily'].includes(syncMode)) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Invalid syncMode. Must be "manual" or "auto_daily".' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({
+          success: false,
+          error: 'Invalid syncMode. Must be "manual" or "auto_daily".',
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
       )
     }
 
@@ -121,10 +124,10 @@ export const PATCH: APIRoute = async ({ request }) => {
       .returning({ id: imapCredentials.id })
 
     if (result.length === 0) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Credential not found' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } }
-      )
+      return new Response(JSON.stringify({ success: false, error: 'Credential not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     console.log(`[settings] Updated syncMode to ${syncMode} for credential ${credentialId}`)
@@ -140,7 +143,7 @@ export const PATCH: APIRoute = async ({ request }) => {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to update settings',
       }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
     )
   }
 }

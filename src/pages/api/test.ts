@@ -30,7 +30,7 @@ interface TestResponse {
 // Default lookback for test: 30 days
 const TEST_LOOKBACK_DAYS = 30
 
-import { isLikelyTicketEmail } from '../../lib/email-filter'
+import { shouldProcessEmail } from '../../lib/email-filter'
 
 // Async function to process test connection in background
 async function processTest(
@@ -38,7 +38,7 @@ async function processTest(
   email: string,
   password: string,
   host: string,
-  port: number
+  port: number,
 ) {
   try {
     // Fetch emails from approved senders with progress callbacks (no ingest)
@@ -76,11 +76,13 @@ async function processTest(
         },
         onSenderComplete: (sender, emails) => {
           // Filter out non-ticket emails
-          const ticketEmails = emails.filter((e) => isLikelyTicketEmail(e.subject))
-          
-          console.log(`[test:${sessionId}] Found ${emails.length} emails from ${sender} (${ticketEmails.length} tickets)`)
+          const ticketEmails = emails.filter((e) => shouldProcessEmail(e.subject, e.from))
+
+          console.log(
+            `[test:${sessionId}] Found ${emails.length} emails from ${sender} (${ticketEmails.length} tickets)`,
+          )
           markSenderCompleted(sessionId, sender)
-          
+
           // Add emails to session (preview only, no ingest)
           for (const emailData of ticketEmails) {
             addEmailToSession(sessionId, {
@@ -98,7 +100,7 @@ async function processTest(
           markSenderCompleted(sessionId, sender)
         },
       },
-      password // Pass password directly instead of using encryption
+      password, // Pass password directly instead of using encryption
     )
 
     // Clear current sender and mark complete (no ingesting for test)
@@ -169,7 +171,7 @@ export const POST: APIRoute = async ({ request }) => {
         sessionId,
         message: 'Test started',
       } satisfies TestResponse),
-      { status: 202, headers: { 'Content-Type': 'application/json' } }
+      { status: 202, headers: { 'Content-Type': 'application/json' } },
     )
   } catch (error) {
     console.error('[test] Error:', error)
@@ -182,7 +184,7 @@ export const POST: APIRoute = async ({ request }) => {
       {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
-      }
+      },
     )
   }
 }

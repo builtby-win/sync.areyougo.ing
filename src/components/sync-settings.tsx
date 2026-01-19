@@ -29,14 +29,14 @@ interface LookbackOption {
 }
 
 interface SyncEmail {
-   messageId: string
-   from: string
-   subject: string
-   date: string
-   body?: string
-   ingestStatus: 'pending' | 'sending' | 'success' | 'failed' | 'skipped'
-   ingestError?: string
- }
+  messageId: string
+  from: string
+  subject: string
+  date: string
+  body?: string
+  ingestStatus: 'pending' | 'sending' | 'success' | 'failed' | 'skipped'
+  ingestError?: string
+}
 
 interface SyncStatus {
   status: 'fetching' | 'ingesting' | 'completed' | 'failed'
@@ -500,7 +500,9 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
                   )}
                   {email.ingestStatus === 'skipped' && (
                     <div className="text-yellow-600 text-xs mt-1">
-                      {email.ingestError ? formatIngestError(email.ingestError) : 'Not a ticket email'}
+                      {email.ingestError
+                        ? formatIngestError(email.ingestError)
+                        : 'Not a ticket email'}
                     </div>
                   )}
                 </div>
@@ -615,9 +617,14 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
                 Found <strong>{syncResult?.found || 0}</strong> ticket emails.
               </p>
               <ul className="list-disc list-inside text-muted-foreground ml-2">
-                <li>Synced successfully: <strong>{syncResult?.ingested || 0}</strong></li>
+                <li>
+                  Synced successfully: <strong>{syncResult?.ingested || 0}</strong>
+                </li>
                 {(syncResult?.found || 0) - (syncResult?.ingested || 0) > 0 && (
-                   <li>Failed: <strong>{(syncResult?.found || 0) - (syncResult?.ingested || 0)}</strong></li>
+                  <li>
+                    Failed:{' '}
+                    <strong>{(syncResult?.found || 0) - (syncResult?.ingested || 0)}</strong>
+                  </li>
                 )}
               </ul>
               <p className="text-muted-foreground mt-2">

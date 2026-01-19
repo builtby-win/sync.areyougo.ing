@@ -31,14 +31,14 @@ interface LookbackOption {
 }
 
 interface SyncEmail {
-   messageId: string
-   from: string
-   subject: string
-   date: string
-   body?: string
-   ingestStatus: 'pending' | 'sending' | 'success' | 'failed' | 'skipped'
-   ingestError?: string
- }
+  messageId: string
+  from: string
+  subject: string
+  date: string
+  body?: string
+  ingestStatus: 'pending' | 'sending' | 'success' | 'failed' | 'skipped'
+  ingestError?: string
+}
 
 type ConnectionState = 'connecting' | 'authenticating' | 'connected' | 'error'
 
@@ -591,8 +591,8 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
                       />
                     </svg>
                   )}
-                  </div>
-                  <div className="flex-1 min-w-0">
+                </div>
+                <div className="flex-1 min-w-0">
                   <div className="font-medium truncate">{email.subject}</div>
                   <div className="text-muted-foreground text-xs mt-1 flex justify-between">
                     <span className="truncate">{email.from}</span>
@@ -612,10 +612,12 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
                   )}
                   {email.ingestStatus === 'skipped' && (
                     <div className="text-yellow-600 text-xs mt-1">
-                      {email.ingestError ? formatIngestError(email.ingestError) : 'Not a ticket email'}
+                      {email.ingestError
+                        ? formatIngestError(email.ingestError)
+                        : 'Not a ticket email'}
                     </div>
                   )}
-                  </div>
+                </div>
               </div>
             ))}
           </div>
@@ -720,9 +722,14 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
                 Found <strong>{syncResult?.found || 0}</strong> ticket emails.
               </p>
               <ul className="list-disc list-inside text-muted-foreground ml-2">
-                <li>Synced successfully: <strong>{syncResult?.ingested || 0}</strong></li>
+                <li>
+                  Synced successfully: <strong>{syncResult?.ingested || 0}</strong>
+                </li>
                 {(syncResult?.found || 0) - (syncResult?.ingested || 0) > 0 && (
-                   <li>Failed: <strong>{(syncResult?.found || 0) - (syncResult?.ingested || 0)}</strong></li>
+                  <li>
+                    Failed:{' '}
+                    <strong>{(syncResult?.found || 0) - (syncResult?.ingested || 0)}</strong>
+                  </li>
                 )}
               </ul>
               <p className="text-muted-foreground mt-2">

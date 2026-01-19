@@ -10,7 +10,7 @@
  */
 export async function encryptPassword(
   password: string,
-  keyBase64: string
+  keyBase64: string,
 ): Promise<{ encrypted: string; iv: string }> {
   const key = await importKey(keyBase64)
   const iv = crypto.getRandomValues(new Uint8Array(12))
@@ -32,7 +32,7 @@ export async function encryptPassword(
 export async function decryptPassword(
   encryptedBase64: string,
   ivBase64: string,
-  keyBase64: string
+  keyBase64: string,
 ): Promise<string> {
   const key = await importKey(keyBase64)
   const iv = base64ToArrayBuffer(ivBase64)

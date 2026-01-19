@@ -17,6 +17,6 @@ export const GET: APIRoute = () => {
       headers: {
         'Content-Type': 'application/json',
       },
-    }
+    },
   )
 }

@@ -111,10 +111,7 @@
       "indexes": {
         "unique_user_imap_email": {
           "name": "unique_user_imap_email",
-          "columns": [
-            "user_id",
-            "imap_email"
-          ],
+          "columns": ["user_id", "imap_email"],
           "isUnique": true
         }
       },

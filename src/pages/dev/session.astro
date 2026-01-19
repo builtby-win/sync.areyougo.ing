@@ -20,9 +20,7 @@ const user = await verifySession(Astro.request, mainAppUrl)
 const isLoggedIn = !!user
 
 // Determine main app session URL for getting the token
-const mainAppSessionUrl = isDev
-  ? 'http://localhost:4321/dev/session'
-  : `${mainAppUrl}/dev/session`
+const mainAppSessionUrl = isDev ? 'http://localhost:4321/dev/session' : `${mainAppUrl}/dev/session`
 ---
 
 <BaseLayout title="Session Transfer | Dev">

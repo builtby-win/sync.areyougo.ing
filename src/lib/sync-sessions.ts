@@ -76,7 +76,7 @@ export function markSenderCompleted(sessionId: string, sender: string): void {
 export function updateConnectionState(
   sessionId: string,
   state: ConnectionState,
-  error?: string
+  error?: string,
 ): void {
   const session = sessions.get(sessionId)
   if (session) {
@@ -99,7 +99,7 @@ export function updateEmailStatus(
   sessionId: string,
   messageId: string,
   status: SyncEmail['ingestStatus'],
-  error?: string
+  error?: string,
 ): void {
   const session = sessions.get(sessionId)
   if (session) {

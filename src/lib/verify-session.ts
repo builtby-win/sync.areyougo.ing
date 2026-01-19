@@ -19,14 +19,15 @@ export interface Session {
   }
 }
 
+interface ErrorCause {
+  code?: string
+}
+
 /**
  * Verify the session by forwarding the cookie to the main app.
  * Returns the user if authenticated, null otherwise.
  */
-export async function verifySession(
-  request: Request,
-  mainAppUrl: string
-): Promise<User | null> {
+export async function verifySession(request: Request, mainAppUrl: string): Promise<User | null> {
   const cookie = request.headers.get('cookie')
   if (!cookie) {
     return null
@@ -76,10 +77,12 @@ export async function verifySession(
   } catch (error) {
     // Check if it's a connection refused error (Docker can't reach host)
     if (error instanceof Error && 'cause' in error) {
-      const cause = error.cause as any
+      const cause = error.cause as ErrorCause
       if (cause?.code === 'ECONNREFUSED') {
         console.error('\n❌ Cannot connect to main app at', mainAppUrl)
-        console.error('💡 If running in Docker, make sure the main areyougo.ing app is running with:')
+        console.error(
+          '💡 If running in Docker, make sure the main areyougo.ing app is running with:',
+        )
         console.error('   cd ../areyougo.ing && pnpm dev:host')
         console.error('   (The --host flag allows Docker to connect to your local server)\n')
         throw new Error('Cannot connect to main app. Is areyougo.ing running with pnpm dev:host?')

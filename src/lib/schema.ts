@@ -26,7 +26,7 @@ export const imapCredentials = sqliteTable(
   (table) => ({
     // Prevent duplicate IMAP accounts per user
     uniqueUserImapEmail: uniqueIndex('unique_user_imap_email').on(table.userId, table.imapEmail),
-  })
+  }),
 )
 
 // Sync history for audit logging

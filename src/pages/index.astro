@@ -56,7 +56,9 @@ const accountsForClient = existingCredentials.map((cred) => ({
   imapEmail: cred.imapEmail,
   lastSyncAt: cred.lastSyncAt?.getTime() ? Math.floor(cred.lastSyncAt.getTime() / 1000) : null,
   syncMode: cred.syncMode,
-  lastManualSyncAt: cred.lastManualSyncAt?.getTime() ? Math.floor(cred.lastManualSyncAt.getTime() / 1000) : null,
+  lastManualSyncAt: cred.lastManualSyncAt?.getTime()
+    ? Math.floor(cred.lastManualSyncAt.getTime() / 1000)
+    : null,
 }))
 ---
 

@@ -48,7 +48,14 @@ export const POST: APIRoute = async ({ request }) => {
       })
     }
 
-    console.log('[setup] Saving credentials for:', { provider, email, host, port, syncMode, credentialId })
+    console.log('[setup] Saving credentials for:', {
+      provider,
+      email,
+      host,
+      port,
+      syncMode,
+      credentialId,
+    })
 
     const db = getDb()
 
@@ -99,7 +106,7 @@ export const POST: APIRoute = async ({ request }) => {
         {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
-        }
+        },
       )
     }
 
