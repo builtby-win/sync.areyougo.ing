@@ -108,10 +108,14 @@ async function processSync(
           updateCurrentSender(sessionId, sender)
         },
         onSenderComplete: (sender, emails) => {
-          console.log(`[sync:${sessionId}] Found ${emails.length} emails from ${sender}`)
+          // Filter out non-ticket emails
+          const ticketEmails = emails.filter((e) => isLikelyTicketEmail(e.subject))
+          
+          console.log(`[sync:${sessionId}] Found ${emails.length} emails from ${sender} (${ticketEmails.length} tickets)`)
           markSenderCompleted(sessionId, sender)
+          
           // Add emails to session immediately for progressive display
-          for (const email of emails) {
+          for (const email of ticketEmails) {
             addEmailToSession(sessionId, {
               messageId: email.messageId,
               from: email.from,
@@ -143,13 +147,6 @@ async function processSync(
 
     for (let i = 0; i < session.emails.length; i++) {
       const email = session.emails[i]
-
-      // Skip emails that don't look like ticket receipts
-      if (!isLikelyTicketEmail(email.subject)) {
-        console.log(`[sync:${sessionId}] Skipping non-ticket email: "${email.subject}" (${email.messageId})`)
-        updateEmailStatus(sessionId, email.messageId, 'skipped')
-        continue
-      }
 
       console.log(`[sync:${sessionId}] Ingesting email ${i + 1}/${session.emails.length}: "${email.subject}" (${email.messageId})`)
       updateEmailStatus(sessionId, email.messageId, 'sending')

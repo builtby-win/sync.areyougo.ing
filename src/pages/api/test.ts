@@ -30,6 +30,8 @@ interface TestResponse {
 // Default lookback for test: 30 days
 const TEST_LOOKBACK_DAYS = 30
 
+import { isLikelyTicketEmail } from '../../lib/email-filter'
+
 // Async function to process test connection in background
 async function processTest(
   sessionId: string,
@@ -73,10 +75,14 @@ async function processTest(
           updateCurrentSender(sessionId, sender)
         },
         onSenderComplete: (sender, emails) => {
-          console.log(`[test:${sessionId}] Found ${emails.length} emails from ${sender}`)
+          // Filter out non-ticket emails
+          const ticketEmails = emails.filter((e) => isLikelyTicketEmail(e.subject))
+          
+          console.log(`[test:${sessionId}] Found ${emails.length} emails from ${sender} (${ticketEmails.length} tickets)`)
           markSenderCompleted(sessionId, sender)
+          
           // Add emails to session (preview only, no ingest)
-          for (const emailData of emails) {
+          for (const emailData of ticketEmails) {
             addEmailToSession(sessionId, {
               messageId: emailData.messageId,
               from: emailData.from,
