@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import AccountCard from './account-card'
 import SetupWizard from './setup-wizard'
+import { buildReturnUrl } from '../lib/redirect'
 
 interface User {
   id: string
@@ -20,15 +21,17 @@ interface AccountCredential {
 interface Props {
   user: User
   accounts: AccountCredential[]
+  redirectUrl?: string | null
 }
 
 const MAX_ACCOUNTS = 5
 
-export default function AccountsList({ user, accounts }: Props) {
+export default function AccountsList({ user, accounts, redirectUrl }: Props) {
   const handleUpdate = () => {
     window.location.reload()
   }
   const [showAddForm, setShowAddForm] = useState(false)
+  const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing/wrapped')
 
   const canAddMore = accounts.length < MAX_ACCOUNTS
 
@@ -99,6 +102,7 @@ export default function AccountsList({ user, accounts }: Props) {
             credential={account}
             onUpdate={handleUpdate}
             onDelete={handleUpdate}
+            redirectUrl={redirectUrl}
           />
         ))}
       </div>
@@ -112,8 +116,11 @@ export default function AccountsList({ user, accounts }: Props) {
 
       {/* Dashboard link */}
       <div className="pt-4 border-t border-border text-center">
-        <a href="https://areyougo.ing/dashboard" className="text-sm text-primary hover:underline">
-          View your timeline on areyougo.ing →
+        <a
+          href={returnUrl}
+          className="text-sm text-primary hover:underline"
+        >
+          Back to your wrapped →
         </a>
       </div>
     </div>

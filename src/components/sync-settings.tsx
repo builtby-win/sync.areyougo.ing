@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { buildReturnUrl } from '../lib/redirect'
 
 interface User {
   id: string
@@ -18,6 +19,7 @@ interface Props {
   user: User
   credentials: ExistingCredentials
   onUpdateSettings: () => void
+  redirectUrl?: string | null
 }
 
 type SyncMode = 'manual' | 'auto_daily'
@@ -66,7 +68,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   other: 'Custom IMAP',
 }
 
-export default function SyncSettings({ user, credentials, onUpdateSettings }: Props) {
+export default function SyncSettings({ user, credentials, onUpdateSettings, redirectUrl }: Props) {
   const [syncMode, setSyncMode] = useState<SyncMode>(credentials.syncMode as SyncMode)
   const [isUpdatingSyncMode, setIsUpdatingSyncMode] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
@@ -77,6 +79,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
   const [showLookbackSelector, setShowLookbackSelector] = useState(false)
   const [rateLimitedUntil, setRateLimitedUntil] = useState<Date | null>(null)
   const [showCompletionModal, setShowCompletionModal] = useState(false)
+  const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing/wrapped')
 
   // Update local sync time when prop changes
   useEffect(() => {
@@ -585,8 +588,8 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
 
       {/* Dashboard link */}
       <div className="pt-2 border-t border-border">
-        <a href="https://areyougo.ing/dashboard" className="text-sm text-primary hover:underline">
-          View your timeline on areyougo.ing →
+        <a href={returnUrl} className="text-sm text-primary hover:underline">
+          Back to your wrapped →
         </a>
       </div>
 
@@ -628,7 +631,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
                 )}
               </ul>
               <p className="text-muted-foreground mt-2">
-                View your events on the dashboard or continue syncing more tickets.
+                Return to your wrapped or continue syncing more tickets.
               </p>
             </div>
             <div className="flex gap-3">
@@ -639,10 +642,10 @@ export default function SyncSettings({ user, credentials, onUpdateSettings }: Pr
                 Sync More
               </button>
               <a
-                href="https://areyougo.ing/dashboard?showSyncing=true"
+                href={returnUrl}
                 className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity text-center"
               >
-                View Dashboard
+                View Wrapped
               </a>
             </div>
           </div>
