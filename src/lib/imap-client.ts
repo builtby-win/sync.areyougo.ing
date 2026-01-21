@@ -4,6 +4,7 @@
  */
 
 import { ImapFlow } from 'imapflow'
+import { simpleParser } from 'mailparser'
 import { APPROVED_SENDERS, isApprovedSender } from './approved-senders'
 import { decryptPassword } from './encryption'
 
@@ -299,15 +300,12 @@ export async function fetchTicketEmails(
             const fromAddress = from?.address || ''
             const fromName = from?.name || ''
 
-            // Extract text body from source
+            // Extract plaintext body using mailparser
             let body = ''
             if (msg.source) {
-              // Simple extraction - get everything after the headers
-              const sourceStr = msg.source.toString()
-              const headerEnd = sourceStr.indexOf('\r\n\r\n')
-              if (headerEnd !== -1) {
-                body = sourceStr.slice(headerEnd + 4, headerEnd + 10004) // Limit to ~10KB
-              }
+              const parsed = await simpleParser(msg.source)
+              // Prefer text/plain, fallback to converted HTML text
+              body = (parsed.text || '').slice(0, 10000) // Limit to ~10KB
             }
 
             const email: Email = {
