@@ -10,6 +10,35 @@ import { eq } from 'drizzle-orm'
 // Get environment and verify session
 const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
 const isDev = process.env.NODE_ENV !== 'production'
+const fallbackRedirectUrl = `${mainAppUrl}/wrapped`
+const redirectUrlParam = Astro.url.searchParams.get('redirectUrl')
+
+let redirectUrl: string | null = null
+
+if (redirectUrlParam) {
+  try {
+    const parsed = new URL(redirectUrlParam)
+    const mainAppHost = new URL(mainAppUrl).hostname
+    const allowedHosts = new Set([mainAppHost])
+    if (isDev) {
+      allowedHosts.add('localhost')
+      allowedHosts.add('127.0.0.1')
+    }
+
+    const allowedProtocols = isDev ? ['http:', 'https:'] : ['https:']
+
+    if (allowedProtocols.includes(parsed.protocol) && allowedHosts.has(parsed.hostname)) {
+      redirectUrl = parsed.toString()
+    }
+  } catch {
+    redirectUrl = null
+  }
+}
+
+const redirectPath = redirectUrl
+  ? `${new URL(redirectUrl).pathname}${new URL(redirectUrl).search}${new URL(redirectUrl).hash}`
+  : '/wrapped'
+const mainAppLoginUrl = `${mainAppUrl}/login?redirect=${encodeURIComponent(redirectPath)}`
 let user: Awaited<ReturnType<typeof verifySession>> = null
 let connectionError: string | null = null
 
@@ -100,7 +129,7 @@ const accountsForClient = existingCredentials.map((cred) => ({
             Please sign in to areyougo.ing first to set up email sync.
           </p>
           <a
-            href={`${mainAppUrl}/dashboard`}
+            href={mainAppLoginUrl}
             class="inline-flex items-center justify-center px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
           >
             Sign in to areyougo.ing
@@ -112,6 +141,7 @@ const accountsForClient = existingCredentials.map((cred) => ({
           client:load
           user={{ id: user.id, email: user.email, name: user.name }}
           accounts={accountsForClient}
+          redirectUrl={redirectUrl}
         />
       ) : (
         <!-- No credentials - show setup wizard -->

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { buildReturnUrl } from '../lib/redirect'
 
 interface User {
   id: string
@@ -20,6 +21,7 @@ interface Props {
   credential: AccountCredential
   onUpdate: () => void
   onDelete: () => void
+  redirectUrl?: string | null
 }
 
 type SyncMode = 'manual' | 'auto_daily'
@@ -73,7 +75,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   other: 'Custom IMAP',
 }
 
-export default function AccountCard({ user, credential, onUpdate, onDelete }: Props) {
+export default function AccountCard({ user, credential, onUpdate, onDelete, redirectUrl }: Props) {
   const [syncMode, setSyncMode] = useState<SyncMode>(credential.syncMode as SyncMode)
   const [isUpdatingSyncMode, setIsUpdatingSyncMode] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
@@ -100,6 +102,11 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
   const [sendersTotal, setSendersTotal] = useState<number>(0)
   const [connectionState, setConnectionState] = useState<ConnectionState | undefined>()
   const [rateLimitedUntil, setRateLimitedUntil] = useState<Date | null>(null)
+  const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing')
+  const returnLabel = redirectUrl ? 'View Wrapped' : 'View Dashboard'
+  const returnDescription = redirectUrl
+    ? 'Return to your wrapped or continue syncing more tickets.'
+    : 'Return to your dashboard or continue syncing more tickets.'
 
   // Check if we're in development
   const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
@@ -733,7 +740,7 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
                 )}
               </ul>
               <p className="text-muted-foreground mt-2">
-                View your events on the dashboard or continue syncing more tickets.
+                {returnDescription}
               </p>
             </div>
             <div className="flex gap-3">
@@ -744,10 +751,10 @@ export default function AccountCard({ user, credential, onUpdate, onDelete }: Pr
                 Sync More
               </button>
               <a
-                href="https://areyougo.ing/dashboard?showSyncing=true"
+                href={returnUrl}
                 className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity text-center"
               >
-                View Dashboard
+                {returnLabel}
               </a>
             </div>
           </div>
