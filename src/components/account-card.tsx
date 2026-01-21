@@ -102,7 +102,11 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
   const [sendersTotal, setSendersTotal] = useState<number>(0)
   const [connectionState, setConnectionState] = useState<ConnectionState | undefined>()
   const [rateLimitedUntil, setRateLimitedUntil] = useState<Date | null>(null)
-  const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing/wrapped')
+  const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing')
+  const returnLabel = redirectUrl ? 'View Wrapped' : 'View Dashboard'
+  const returnDescription = redirectUrl
+    ? 'Return to your wrapped or continue syncing more tickets.'
+    : 'Return to your dashboard or continue syncing more tickets.'
 
   // Check if we're in development
   const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
@@ -736,7 +740,7 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
                 )}
               </ul>
               <p className="text-muted-foreground mt-2">
-                Return to your wrapped or continue syncing more tickets.
+                {returnDescription}
               </p>
             </div>
             <div className="flex gap-3">
@@ -750,7 +754,7 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
                 href={returnUrl}
                 className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity text-center"
               >
-                View Wrapped
+                {returnLabel}
               </a>
             </div>
           </div>

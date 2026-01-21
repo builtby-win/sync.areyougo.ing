@@ -141,7 +141,7 @@ const accountsForClient = existingCredentials.map((cred) => ({
           client:load
           user={{ id: user.id, email: user.email, name: user.name }}
           accounts={accountsForClient}
-          redirectUrl={redirectUrl ?? fallbackRedirectUrl}
+          redirectUrl={redirectUrl}
         />
       ) : (
         <!-- No credentials - show setup wizard -->

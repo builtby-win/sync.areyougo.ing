@@ -31,7 +31,8 @@ export default function AccountsList({ user, accounts, redirectUrl }: Props) {
     window.location.reload()
   }
   const [showAddForm, setShowAddForm] = useState(false)
-  const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing/wrapped')
+  const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing')
+  const returnLabel = redirectUrl ? 'Back to your wrapped →' : 'Back to Dashboard →'
 
   const canAddMore = accounts.length < MAX_ACCOUNTS
 
@@ -120,7 +121,7 @@ export default function AccountsList({ user, accounts, redirectUrl }: Props) {
           href={returnUrl}
           className="text-sm text-primary hover:underline"
         >
-          Back to your wrapped →
+          {returnLabel}
         </a>
       </div>
     </div>
