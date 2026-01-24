@@ -13,6 +13,11 @@ export const APPROVED_SENDERS = [
   'noreply@order.eventbrite.com',
   'customer_support@email.ticketmaster.com',
   'noreply@dice.fm',
+  'events@mail.stubhub.com',
+  'tickets@live.vividseats.com',
+  'calendar.luma-mail.com',
+  'noreply@ra.co',
+  'noreply@orders.skiddle.com',
 ] as const
 
 export type ApprovedSender = (typeof APPROVED_SENDERS)[number]
