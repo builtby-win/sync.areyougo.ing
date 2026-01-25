@@ -53,6 +53,9 @@ importers:
       drizzle-orm:
         specifier: ^0.44.2
         version: 0.44.7(@cloudflare/workers-types@4.20251230.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@11.10.0)
+      html-to-text:
+        specifier: ^9.0.5
+        version: 9.0.5
       imapflow:
         specifier: ^1.0.171
         version: 1.2.4
@@ -96,6 +99,9 @@ importers:
       '@types/better-sqlite3':
         specifier: ^7.6.12
         version: 7.6.13
+      '@types/html-to-text':
+        specifier: ^9.0.4
+        version: 9.0.4
       '@types/node':
         specifier: ^24.0.7
         version: 24.10.4
@@ -1430,6 +1436,9 @@ packages:
 
   '@types/hast@3.0.4':
     resolution: {integrity: sha512-WPs+bbQw5aCj+x6laNGWLH3wviHtoCv/P3+otBhbOhJgG8qtpdAMlTCxLtsTWA7LH1Oh/bFCHsBn0TPS5m30EQ==}
+
+  '@types/html-to-text@9.0.4':
+    resolution: {integrity: sha512-pUY3cKH/Nm2yYrEmDlPR1mR7yszjGx4DrwPjQ702C4/D5CwHuZTgZdIdwPkRbcuhs7BAh2L5rg3CL5cbRiGTCQ==}
 
   '@types/mailparser@3.4.6':
     resolution: {integrity: sha512-wVV3cnIKzxTffaPH8iRnddX1zahbYB1ZEoAxyhoBo3TBCBuK6nZ8M8JYO/RhsCuuBVOw/DEN/t/ENbruwlxn6Q==}
@@ -4521,6 +4530,8 @@ snapshots:
   '@types/hast@3.0.4':
     dependencies:
       '@types/unist': 3.0.3
+
+  '@types/html-to-text@9.0.4': {}
 
   '@types/mailparser@3.4.6':
     dependencies:

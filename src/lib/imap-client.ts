@@ -4,6 +4,7 @@
  */
 
 import { ImapFlow } from 'imapflow'
+import { convert } from 'html-to-text'
 import { simpleParser } from 'mailparser'
 import { APPROVED_SENDERS, isApprovedSender } from './approved-senders'
 import { decryptPassword } from './encryption'
@@ -146,6 +147,7 @@ export async function fetchSampleEmails(
       const range = `${startSeq}:*`
 
       for await (const msg of client.fetch(range, { envelope: true })) {
+        if (!msg.envelope) continue
         const fromAddress = msg.envelope.from?.[0]?.address || ''
 
         if (isApprovedSender(fromAddress)) {
@@ -270,8 +272,8 @@ export async function fetchTicketEmails(
           let resultArray: number[]
           if (Array.isArray(results)) {
             resultArray = results
-          } else if (results instanceof Set) {
-            resultArray = Array.from(results)
+          } else if ((results as any) instanceof Set) {
+            resultArray = Array.from(results as unknown as Set<number>)
           } else {
             console.warn(
               `[imap-client] Unexpected search result type for ${sender}:`,
@@ -296,6 +298,7 @@ export async function fetchTicketEmails(
             envelope: true,
             source: true, // Fetch full message source for body extraction
           })) {
+            if (!msg.envelope) continue
             const from = msg.envelope.from?.[0]
             const fromAddress = from?.address || ''
             const fromName = from?.name || ''
@@ -304,8 +307,23 @@ export async function fetchTicketEmails(
             let body = ''
             if (msg.source) {
               const parsed = await simpleParser(msg.source)
-              // Prefer text/plain, fallback to converted HTML text
-              body = (parsed.text || '').slice(0, 10000) // Limit to ~10KB
+              const text = parsed.text || ''
+              const html = parsed.html || ''
+
+              // Some providers (like Ticketmaster) send a "text/plain" part that is just a single word
+              // or very short, while the real content is in the HTML part.
+              // If text is suspiciously short (< 100 chars) and we have HTML, prefer the HTML-to-text conversion.
+              if (text.length < 100 && html.length > 0) {
+                body = convert(html, {
+                  wordwrap: 130,
+                  selectors: [
+                    { selector: 'a', options: { hideLinkHrefIfSameAsText: true } },
+                    { selector: 'img', format: 'skip' }, // Skip images to reduce noise
+                  ],
+                })
+              } else {
+                body = text
+              }
             }
 
             const email: Email = {
