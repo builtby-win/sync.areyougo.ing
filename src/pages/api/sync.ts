@@ -147,11 +147,15 @@ async function processSync(
       throw new Error('Session not found')
     }
 
-    for (let i = 0; i < session.emails.length; i++) {
-      const email = session.emails[i]
+    const emailsForIngest = [...session.emails].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+    )
+
+    for (let i = 0; i < emailsForIngest.length; i++) {
+      const email = emailsForIngest[i]
 
       console.log(
-        `[sync:${sessionId}] Ingesting email ${i + 1}/${session.emails.length}: "${email.subject}" (${email.messageId})`,
+        `[sync:${sessionId}] Ingesting email ${i + 1}/${emailsForIngest.length}: "${email.subject}" (${email.messageId})`,
       )
       updateEmailStatus(sessionId, email.messageId, 'sending')
 

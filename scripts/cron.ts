@@ -3,12 +3,12 @@
  * Runs daily at 6am UTC to fetch emails for users with auto-sync enabled.
  */
 
-import cron from 'node-cron'
 import { eq } from 'drizzle-orm'
+import cron from 'node-cron'
 import { getDb } from '../src/lib/db'
 import { shouldProcessEmail } from '../src/lib/email-filter'
-import { imapCredentials, syncHistory } from '../src/lib/schema'
 import { fetchTicketEmails } from '../src/lib/imap-client'
+import { imapCredentials, syncHistory } from '../src/lib/schema'
 
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE || '0 6 * * *' // Daily at 6am UTC
 
@@ -56,10 +56,12 @@ async function runSync(): Promise<void> {
 
       console.log(`[cron] Found ${emails.length} ticket emails for user ${cred.userId}`)
 
+      const emailsForIngest = [...emails].sort((a, b) => a.date.getTime() - b.date.getTime())
+
       let ingestedCount = 0
 
       // POST each email to the main app's ingest endpoint
-      for (const email of emails) {
+      for (const email of emailsForIngest) {
         // Skip emails that don't look like ticket receipts
         if (!shouldProcessEmail(email.subject, email.from)) {
           console.log(`[cron] Skipping email: "${email.subject}" (${email.messageId})`)
