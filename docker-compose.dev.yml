@@ -6,3 +6,4 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - NODE_ENV=development
+      - MAIN_APP_URL=http://host.docker.internal:4321
