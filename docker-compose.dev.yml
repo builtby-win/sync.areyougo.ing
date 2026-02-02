@@ -6,3 +6,7 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - NODE_ENV=development
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.astro

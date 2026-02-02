@@ -89,15 +89,21 @@ const accountsForClient = existingCredentials.map((cred) => ({
     ? Math.floor(cred.lastManualSyncAt.getTime() / 1000)
     : null,
 }))
+
+// Check if we're in embedded mode (loaded in an iframe from main app)
+const isEmbedded = Astro.url.searchParams.get('embedded') === 'true'
 ---
 
 <BaseLayout>
-  <div class="min-h-[80vh] flex flex-col items-center justify-center px-4 py-12">
+  <div class:list={[
+    "flex flex-col items-center px-4",
+    isEmbedded ? "min-h-0 py-6" : "min-h-[80vh] justify-center py-12"
+  ]}>
     <div class="w-full max-w-lg">
-      <!-- Header -->
-      <div class="text-center mb-8">
-        <h1 class="text-3xl font-bold mb-2">Email Sync Setup</h1>
-        <p class="text-muted-foreground">
+      <!-- Header - smaller in embedded mode -->
+      <div class:list={["text-center", isEmbedded ? "mb-4" : "mb-8"]}>
+        <h1 class:list={["font-bold mb-2", isEmbedded ? "text-xl" : "text-3xl"]}>Email Sync Setup</h1>
+        <p class="text-muted-foreground text-sm">
           Connect your email to automatically import ticket confirmations
         </p>
       </div>
@@ -152,17 +158,19 @@ const accountsForClient = existingCredentials.map((cred) => ({
         />
       )}
 
-      <!-- Transparency Notice -->
-      <div class="mt-8 p-4 bg-card/50 rounded-lg border border-border">
-        <h3 class="font-semibold mb-2 text-sm">Privacy & Transparency</h3>
-        <ul class="text-sm text-muted-foreground space-y-1">
-          <li>* Your password is encrypted and never logged</li>
-          <li>* We only read emails from <a href="https://github.com/builtby-win/sync.areyougo.ing/blob/main/src/lib/approved-senders.ts" target="_blank" class="text-primary hover:underline">approved ticket vendors</a></li>
-          <li>* Use an app-specific password (not your main password)</li>
-          <li>* You can delete your data anytime</li>
-          <li>* This code is <a href="https://github.com/builtby-win/sync.areyougo.ing" target="_blank" class="text-primary hover:underline">open source</a></li>
-        </ul>
-      </div>
+      {/* Hide transparency notice in embedded mode for cleaner experience */}
+      {!isEmbedded && (
+        <div class="mt-8 p-4 bg-card/50 rounded-lg border border-border">
+          <h3 class="font-semibold mb-2 text-sm">Privacy & Transparency</h3>
+          <ul class="text-sm text-muted-foreground space-y-1">
+            <li>* Your password is encrypted and never logged</li>
+            <li>* We only read emails from <a href="https://github.com/builtby-win/sync.areyougo.ing/blob/main/src/lib/approved-senders.ts" target="_blank" class="text-primary hover:underline">approved ticket vendors</a></li>
+            <li>* Use an app-specific password (not your main password)</li>
+            <li>* You can delete your data anytime</li>
+            <li>* This code is <a href="https://github.com/builtby-win/sync.areyougo.ing" target="_blank" class="text-primary hover:underline">open source</a></li>
+          </ul>
+        </div>
+      )}
     </div>
   </div>
 </BaseLayout>

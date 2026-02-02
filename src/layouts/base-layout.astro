@@ -14,10 +14,13 @@ const {
 const commit = import.meta.env.PUBLIC_GIT_COMMIT || 'local'
 const commitShort = commit.slice(0, 7)
 const repoUrl = 'https://github.com/builtby-win/sync.areyougo.ing'
+
+// Check if we're in embedded mode (loaded in an iframe from main app)
+const isEmbedded = Astro.url.searchParams.get('embedded') === 'true'
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark" data-embedded={isEmbedded ? 'true' : undefined}>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -34,40 +37,64 @@ const repoUrl = 'https://github.com/builtby-win/sync.areyougo.ing'
     <meta name="robots" content="noindex" />
 
     <meta name="generator" content={Astro.generator} />
+
+    <script is:inline>
+      // Force dark mode immediately to avoid flash of light mode
+      document.documentElement.classList.add('dark');
+    </script>
   </head>
-  <body class="min-h-screen flex flex-col antialiased">
+  <body class:list={["min-h-screen flex flex-col antialiased", isEmbedded && "embedded-mode"]}>
     <main class="flex-1">
       <slot />
     </main>
 
-    <!-- Transparency Footer -->
-    <footer class="border-t border-border py-4 px-6">
-      <div class="max-w-2xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-sm text-muted-foreground">
-        <div>
-          Running commit <a
-            href={`${repoUrl}/commit/${commit}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="font-mono text-primary hover:underline"
-          >{commitShort}</a>
+    {/* Hide footer in embedded mode for cleaner iframe experience */}
+    {!isEmbedded && (
+      <footer class="border-t border-border py-4 px-6">
+        <div class="max-w-2xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-sm text-muted-foreground">
+          <div>
+            Running commit <a
+              href={`${repoUrl}/commit/${commit}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="font-mono text-primary hover:underline"
+            >{commitShort}</a>
+          </div>
+          <div class="flex items-center gap-4">
+            <a
+              href={repoUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="hover:text-foreground transition-colors"
+            >
+              View source on GitHub
+            </a>
+            <a
+              href="https://areyougo.ing"
+              class="hover:text-foreground transition-colors"
+            >
+              areyougo.ing
+            </a>
+          </div>
         </div>
-        <div class="flex items-center gap-4">
-          <a
-            href={repoUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="hover:text-foreground transition-colors"
-          >
-            View source on GitHub
-          </a>
-          <a
-            href="https://areyougo.ing"
-            class="hover:text-foreground transition-colors"
-          >
-            areyougo.ing
-          </a>
-        </div>
-      </div>
-    </footer>
+      </footer>
+    )}
+
+    {/* Notify parent when embedded and ready */}
+    {isEmbedded && (
+      <script>
+        import { notifyReady } from '../lib/post-message'
+
+        const signalReady = () => {
+          notifyReady()
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', signalReady, { once: true })
+        } else {
+          signalReady()
+        }
+      </script>
+    )}
   </body>
 </html>
