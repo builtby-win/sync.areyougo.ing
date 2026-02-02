@@ -51,6 +51,10 @@
   --radius-sm: calc(0.5rem - 4px);
   --radius-full: 9999px;
 
+  /* Scrollbar */
+  --color-scrollbar-thumb: oklch(70% 0.02 220 / 0.4);
+  --color-scrollbar-thumb-hover: oklch(78% 0.02 220 / 0.6);
+
   /* Container */
   --container-center: true;
   --container-padding: 1.5rem;
@@ -61,6 +65,9 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     font-family: var(--font-sans);
+    color-scheme: dark;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
   }
 
   * {
@@ -71,6 +78,7 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     min-height: 100vh;
+    margin: 0;
   }
 
   a {
@@ -98,4 +106,71 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-mist-800);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-mist-700);
+}
+
+/* Embedded mode styles - when loaded in iframe from main app */
+body.embedded-mode {
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+html[data-embedded="true"] {
+  height: 100%;
+  overflow: hidden;
+}
+
+html[data-embedded="true"] body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
+}
+
+html[data-embedded="true"] ::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+html[data-embedded="true"] ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html[data-embedded="true"] ::-webkit-scrollbar-thumb {
+  background-color: var(--color-scrollbar-thumb);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+html[data-embedded="true"] ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-scrollbar-thumb-hover);
+}
+
+/* In embedded mode, remove extra padding and ensure background covers everything */
+html[data-embedded="true"],
+html[data-embedded="true"] body {
+  background-color: var(--color-background);
+}
+
+html[data-embedded="true"] body {
+  min-height: 100%;
 }

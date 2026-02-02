@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { isEmbedded, notifySyncComplete } from '../lib/post-message'
 import { buildReturnUrl } from '../lib/redirect'
 
 interface User {
@@ -110,6 +111,12 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
 
   // Check if we're in development
   const isDev = typeof window !== 'undefined' && window.location.hostname === 'localhost'
+
+  // Check if we're in embedded mode (inside iframe from main app)
+  const [embeddedMode, setEmbeddedMode] = useState(false)
+  useEffect(() => {
+    setEmbeddedMode(isEmbedded())
+  }, [])
 
   // Calculate if rate limited (only in production)
   // NOTE: Set ENABLE_MANUAL_SYNC_RATE_LIMIT to true to re-enable the 24-hour blocker
@@ -739,9 +746,11 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
                   </li>
                 )}
               </ul>
-              <p className="text-muted-foreground mt-2">
-                {returnDescription}
-              </p>
+              {!embeddedMode && (
+                <p className="text-muted-foreground mt-2">
+                  {returnDescription}
+                </p>
+              )}
             </div>
             <div className="flex gap-3">
               <button
@@ -750,12 +759,23 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
               >
                 Sync More
               </button>
-              <a
-                href={returnUrl}
-                className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity text-center"
-              >
-                {returnLabel}
-              </a>
+              {embeddedMode ? (
+                <button
+                  onClick={() => {
+                    notifySyncComplete(syncResult?.found || 0, syncResult?.ingested || 0)
+                  }}
+                  className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+                >
+                  Done
+                </button>
+              ) : (
+                <a
+                  href={returnUrl}
+                  className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity text-center"
+                >
+                  {returnLabel}
+                </a>
+              )}
             </div>
           </div>
         </div>
