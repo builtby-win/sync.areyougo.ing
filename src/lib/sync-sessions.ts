@@ -4,7 +4,7 @@ export interface SyncEmail {
   subject: string
   date: string
   body: string
-  ingestStatus: 'pending' | 'sending' | 'success' | 'failed'
+  ingestStatus: 'pending' | 'sending' | 'success' | 'failed' | 'skipped'
   ingestError?: string
 }
 
@@ -13,7 +13,8 @@ export type ConnectionState = 'connecting' | 'authenticating' | 'connected' | 'e
 export interface SyncSession {
   id: string
   userId: string
-  status: 'fetching' | 'ingesting' | 'completed' | 'failed'
+  credentialId: string
+  status: 'fetching' | 'waiting_for_selection' | 'ingesting' | 'completed' | 'failed'
   emails: SyncEmail[]
   totalFound: number
   totalIngested: number
@@ -32,11 +33,16 @@ export interface SyncSession {
 // In-memory store (simple Map, cleared on restart)
 const sessions = new Map<string, SyncSession>()
 
-export function createSession(userId: string, sendersTotal: number): string {
+export function createSession(
+  userId: string,
+  credentialId: string,
+  sendersTotal: number,
+): string {
   const sessionId = `sync_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`
   sessions.set(sessionId, {
     id: sessionId,
     userId,
+    credentialId,
     status: 'fetching',
     emails: [],
     totalFound: 0,

@@ -4,6 +4,7 @@ import { APPROVED_SENDERS } from '../../lib/approved-senders'
 import { getDb } from '../../lib/db'
 import { shouldProcessEmail } from '../../lib/email-filter'
 import { fetchTicketEmails } from '../../lib/imap-client'
+import { runIngestion } from '../../lib/ingest'
 import { imapCredentials, syncHistory } from '../../lib/schema'
 import {
   addEmailToSession,
@@ -22,6 +23,7 @@ interface SyncRequest {
   credentialId: string
   lookbackDays: number
   dryRun: boolean
+  waitForSelection?: boolean
 }
 
 interface EmailForIngest {
@@ -70,6 +72,7 @@ async function processSync(
   lookbackDays: number,
   mainAppUrl: string,
   ingestApiKey: string | undefined,
+  waitForSelection = false,
 ) {
   const db = getDb()
 
@@ -135,98 +138,22 @@ async function processSync(
       },
     )
 
-    // Clear current sender and move to ingesting
+    // Clear current sender
     updateCurrentSender(sessionId, undefined)
-    updateSession(sessionId, { status: 'ingesting' })
 
-    // Ingest each email
-    const session = getSession(sessionId)
-    console.log(`[sync:${sessionId}] Total: ${session?.totalFound || 0} ticket emails found`)
-
-    if (!session) {
-      throw new Error('Session not found')
+    if (waitForSelection) {
+      updateSession(sessionId, { status: 'waiting_for_selection' })
+      console.log(`[sync:${sessionId}] Waiting for user selection`)
+      return
     }
 
-    const emailsForIngest = [...session.emails].sort(
-      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-    )
-
-    for (let i = 0; i < emailsForIngest.length; i++) {
-      const email = emailsForIngest[i]
-
-      console.log(
-        `[sync:${sessionId}] Ingesting email ${i + 1}/${emailsForIngest.length}: "${email.subject}" (${email.messageId})`,
-      )
-      updateEmailStatus(sessionId, email.messageId, 'sending')
-
-      try {
-        const payload = {
-          recipientEmail: cred.imapEmail,
-          senderEmail: extractEmailAddress(email.from),
-          subject: email.subject,
-          body: email.body,
-          emailDate: email.date,
-          userId: cred.userId,
-        }
-        console.log(
-          `[sync:${sessionId}] POST ${mainAppUrl}/api/ingest - recipient: ${payload.recipientEmail}, sender: ${payload.senderEmail}`,
-        )
-
-        const response = await fetch(`${mainAppUrl}/api/ingest`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(ingestApiKey && { 'X-API-Key': ingestApiKey }),
-          },
-          body: JSON.stringify(payload),
-        })
-
-        if (response.ok) {
-          const result = await response.json()
-          console.log(`[sync:${sessionId}] Ingest success for ${email.messageId}:`, result)
-          updateEmailStatus(sessionId, email.messageId, 'success')
-        } else {
-          const errorText = await response.text()
-          console.error(
-            `[sync:${sessionId}] Ingest failed for ${email.messageId} (${response.status}):`,
-            errorText,
-          )
-          updateEmailStatus(sessionId, email.messageId, 'failed', errorText)
-        }
-      } catch (error) {
-        const errorMsg = error instanceof Error ? error.message : 'Network error'
-        console.error(`[sync:${sessionId}] Error ingesting email ${email.messageId}:`, error)
-        updateEmailStatus(sessionId, email.messageId, 'failed', errorMsg)
-      }
-    }
-
-    // Update timestamps for this specific credential
-    await db
-      .update(imapCredentials)
-      .set({
-        lastSyncAt: new Date(),
-        lastManualSyncAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(imapCredentials.id, cred.id))
-
-    // Log to history with credentialId
-    const finalSession = getSession(sessionId)!
-    await db.insert(syncHistory).values({
-      id: crypto.randomUUID(),
-      userId: cred.userId,
-      credentialId: cred.id,
-      status: finalSession.totalIngested === finalSession.totalFound ? 'success' : 'partial',
-      emailsFound: finalSession.totalFound,
-      emailsIngested: finalSession.totalIngested,
-      startedAt: finalSession.startedAt,
-      completedAt: new Date(),
+    // Ingest immediately if not waiting
+    await runIngestion({
+      sessionId,
+      cred: { id: cred.id, userId: cred.userId, imapEmail: cred.imapEmail },
+      mainAppUrl,
+      ingestApiKey,
     })
-
-    updateSession(sessionId, { status: 'completed', completedAt: new Date() })
-    console.log(
-      `[sync:${sessionId}] Complete: ${finalSession.totalIngested}/${finalSession.totalFound} ingested`,
-    )
   } catch (error) {
     console.error(`[sync:${sessionId}] Error:`, error)
     updateSession(sessionId, {
@@ -268,7 +195,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     // Parse request body
     const body = (await request.json()) as SyncRequest
-    const { credentialId, lookbackDays, dryRun } = body
+    const { credentialId, lookbackDays, dryRun, waitForSelection } = body
 
     if (!credentialId) {
       return new Response(JSON.stringify({ success: false, error: 'credentialId is required' }), {
@@ -365,12 +292,19 @@ export const POST: APIRoute = async ({ request }) => {
 
     // For real sync: create session and process asynchronously
     cleanupSessions()
-    const sessionId = createSession(user.id, APPROVED_SENDERS.length)
+    const sessionId = createSession(user.id, cred.id, APPROVED_SENDERS.length)
 
     // Start async processing (don't await)
-    processSync(sessionId, cred, encryptionKey, lookbackDays, mainAppUrl, ingestApiKey).catch(
-      (err) => {
-        console.error(`[sync:${sessionId}] Async sync error:`, err)
+    processSync(
+      sessionId,
+      cred,
+      encryptionKey,
+      lookbackDays,
+      mainAppUrl,
+      ingestApiKey,
+      waitForSelection,
+    ).catch((err) => {
+      console.error(`[sync:${sessionId}] Async sync error:`, err)
         updateSession(sessionId, {
           status: 'failed',
           error: err instanceof Error ? err.message : 'Sync failed',
