@@ -292,12 +292,29 @@ export default function SyncRunner({ user, credentialId, redirectUrl }: Props) {
 
         <div className="flex flex-col gap-3">
             {isEmbeddedMode ? (
-                <button
-                    onClick={() => notifySyncComplete(statusData?.totalFound || 0, successCount)}
-                    className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
-                >
-                    Done
-                </button>
+                <>
+                  {failCount === 0 ? (
+                    <button
+                        onClick={() => {
+                            console.log('[SyncRunner] Clicking Go to Timeline')
+                            notifySyncComplete(statusData?.totalFound || 0, successCount, 'timeline')
+                        }}
+                        className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+                    >
+                        Go to Timeline
+                    </button>
+                  ) : (
+                    <button
+                        onClick={() => {
+                            console.log('[SyncRunner] Clicking View Sync Issues')
+                            notifySyncComplete(statusData?.totalFound || 0, successCount, 'audit')
+                        }}
+                        className="w-full px-4 py-2 bg-destructive text-destructive-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+                    >
+                        View Sync Issues
+                    </button>
+                  )}
+                </>
             ) : (
                 <a 
                     href={returnUrl}

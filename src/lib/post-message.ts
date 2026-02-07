@@ -26,6 +26,7 @@ export interface SyncCompleteMessage {
   data: {
     emailsFound: number
     emailsIngested: number
+    nextAction?: 'timeline' | 'audit'
   }
 }
 
@@ -96,7 +97,10 @@ export function postToParent(message: SyncMessage): boolean {
   // Post to all allowed origins (the parent will only receive if one matches)
   // In production, we use '*' because we've already validated via CSP frame-ancestors
   // The CSP header ensures only areyougo.ing can embed us
-  const targetOrigin = parentOrigin || '*'
+  // For local dev, we also force '*' to avoid localhost vs 127.0.0.1 mismatches
+  const targetOrigin = '*' 
+  // const targetOrigin = parentOrigin || '*'
+  console.log('[sync] Posting message to parent:', message.type, 'Target:', targetOrigin)
 
   try {
     window.parent.postMessage(
@@ -106,6 +110,7 @@ export function postToParent(message: SyncMessage): boolean {
       },
       targetOrigin,
     )
+    console.log('[sync] Message posted successfully')
     return true
   } catch (error) {
     console.error('[sync] Failed to post message to parent:', error)
@@ -123,10 +128,14 @@ export function notifyReady(): boolean {
 /**
  * Notify parent that sync completed successfully
  */
-export function notifySyncComplete(emailsFound: number, emailsIngested: number): boolean {
+export function notifySyncComplete(
+  emailsFound: number,
+  emailsIngested: number,
+  nextAction?: 'timeline' | 'audit',
+): boolean {
   return postToParent({
     type: 'SYNC_COMPLETE',
-    data: { emailsFound, emailsIngested },
+    data: { emailsFound, emailsIngested, nextAction },
   })
 }
 
