@@ -37,9 +37,15 @@ const PROVIDER_NAMES: Record<string, string> = {
 export default function AccountCard({ user, credential, onUpdate, onDelete, redirectUrl }: Props) {
   const [syncMode, setSyncMode] = useState<SyncMode>(credential.syncMode as SyncMode)
   const [isUpdatingSyncMode, setIsUpdatingSyncMode] = useState(false)
+  const [localLastSyncAt, setLocalLastSyncAt] = useState<number | null>(credential.lastSyncAt)
   const [error, setError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  // Update local sync time when prop changes
+  useEffect(() => {
+    setLocalLastSyncAt(credential.lastSyncAt)
+  }, [credential.lastSyncAt])
 
   // Construct run URL
   const runUrl = `/run/${credential.id}${redirectUrl ? `?redirectUrl=${encodeURIComponent(redirectUrl)}` : ''}`
