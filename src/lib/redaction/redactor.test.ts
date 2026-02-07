@@ -61,6 +61,11 @@ describe('redactPii', () => {
       expect(redactPii('GA THB 8,000')).toBe('GA THB 8,000')
       expect(redactPii('Processing Fees: + $ 13.26')).toBe('Processing Fees: + $ 13.26')
     })
+
+    it('preserves prices without currency symbols', () => {
+      expect(redactPii('Amount Charged: 183.15')).toBe('Amount Charged: 183.15')
+      expect(redactPii('Total: 1049.1')).toBe('Total: 1049.1')
+    })
   })
 
   describe('Non-PII Number Preservation', () => {
