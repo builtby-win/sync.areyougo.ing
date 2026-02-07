@@ -166,9 +166,9 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
       )}
 
       {/* Last sync info */}
-      {credential.lastSyncAt && (
+      {localLastSyncAt && (
         <div className="text-sm text-muted-foreground">
-          Last synced: {formatRelativeTime(credential.lastSyncAt)}
+          Last synced: {formatRelativeTime(localLastSyncAt)}
         </div>
       )}
 
