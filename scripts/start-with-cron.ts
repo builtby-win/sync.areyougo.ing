@@ -16,7 +16,13 @@ startCronJobs()
 console.log('[server] Starting Astro server...')
 console.log(`[server] Server will listen on ${process.env.HOST}:${process.env.PORT}`)
 
-const server = spawn('node', ['dist/server/entry.mjs'], {
+const isDev = process.env.NODE_ENV === 'development'
+const command = isDev ? 'pnpm' : 'node'
+const args = isDev ? ['astro', 'dev', '--host'] : ['dist/server/entry.mjs']
+
+console.log(`[server] Running: ${command} ${args.join(' ')}`)
+
+const server = spawn(command, args, {
   stdio: 'inherit',
   env: process.env,
 })

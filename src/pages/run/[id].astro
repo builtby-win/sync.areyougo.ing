@@ -1,0 +1,53 @@
+---
+import BaseLayout from '../../layouts/base-layout.astro'
+import SyncRunner from '../../components/sync-runner'
+import { verifySession } from '../../lib/verify-session'
+import { getDb } from '../../lib/db'
+import { imapCredentials } from '../../lib/schema'
+import { and, eq } from 'drizzle-orm'
+
+const { id } = Astro.params
+const internalMainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
+const publicMainAppUrl = process.env.PUBLIC_MAIN_APP_URL || internalMainAppUrl
+
+let user: Awaited<ReturnType<typeof verifySession>> = null
+let error: string | null = null
+
+try {
+  user = await verifySession(Astro.request, internalMainAppUrl)
+} catch (e) {
+  error = 'Authentication failed'
+}
+
+if (!user) {
+  return Astro.redirect('/')
+}
+
+if (!id) {
+  return Astro.redirect('/')
+}
+
+// Verify ownership
+const db = getDb()
+const creds = await db
+  .select()
+  .from(imapCredentials)
+  .where(and(eq(imapCredentials.id, id), eq(imapCredentials.userId, user.id)))
+  .limit(1)
+
+if (creds.length === 0) {
+  return Astro.redirect('/')
+}
+
+const redirectUrl = Astro.url.searchParams.get('redirectUrl')
+---
+
+<BaseLayout>
+  <SyncRunner
+    client:load
+    user={{ id: user.id, email: user.email, name: user.name }}
+    credentialId={id}
+    redirectUrl={redirectUrl}
+    mainAppUrl={publicMainAppUrl}
+  />
+</BaseLayout>

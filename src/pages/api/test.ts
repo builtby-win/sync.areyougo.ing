@@ -152,7 +152,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     // Create session and process asynchronously
     cleanupSessions()
-    const sessionId = createSession(user.id, APPROVED_SENDERS.length)
+    const sessionId = createSession(user.id, 'test', APPROVED_SENDERS.length)
 
     // Start async processing (don't await)
     processTest(sessionId, email, password, host, port).catch((err) => {

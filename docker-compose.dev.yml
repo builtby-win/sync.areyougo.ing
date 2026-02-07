@@ -6,6 +6,8 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       - NODE_ENV=development
+      - MAIN_APP_URL=http://host.docker.internal:4321
+      - PUBLIC_MAIN_APP_URL=http://localhost:4321
     volumes:
       - .:/app
       - /app/node_modules

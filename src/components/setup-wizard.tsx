@@ -334,9 +334,12 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
         return
       }
 
-      // If callback provided, use it; otherwise reload
+      // If callback provided, use it
       if (onComplete) {
         onComplete()
+      } else if (data.credentialId) {
+        // Redirect to run sync page for the new account
+        window.location.href = `/run/${data.credentialId}`
       } else {
         setStep('success')
       }
