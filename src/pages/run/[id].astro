@@ -7,13 +7,14 @@ import { imapCredentials } from '../../lib/schema'
 import { and, eq } from 'drizzle-orm'
 
 const { id } = Astro.params
-const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
+const internalMainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
+const publicMainAppUrl = process.env.PUBLIC_MAIN_APP_URL || internalMainAppUrl
 
 let user: Awaited<ReturnType<typeof verifySession>> = null
 let error: string | null = null
 
 try {
-  user = await verifySession(Astro.request, mainAppUrl)
+  user = await verifySession(Astro.request, internalMainAppUrl)
 } catch (e) {
   error = 'Authentication failed'
 }
@@ -47,5 +48,6 @@ const redirectUrl = Astro.url.searchParams.get('redirectUrl')
     user={{ id: user.id, email: user.email, name: user.name }}
     credentialId={id}
     redirectUrl={redirectUrl}
+    mainAppUrl={publicMainAppUrl}
   />
 </BaseLayout>

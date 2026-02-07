@@ -22,16 +22,17 @@ interface Props {
   user: User
   accounts: AccountCredential[]
   redirectUrl?: string | null
+  mainAppUrl?: string
 }
 
 const MAX_ACCOUNTS = 5
 
-export default function AccountsList({ user, accounts, redirectUrl }: Props) {
+export default function AccountsList({ user, accounts, redirectUrl, mainAppUrl = 'https://areyougo.ing' }: Props) {
   const handleUpdate = () => {
     window.location.reload()
   }
   const [showAddForm, setShowAddForm] = useState(false)
-  const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing')
+  const returnUrl = buildReturnUrl(redirectUrl ?? null, mainAppUrl)
   const returnLabel = redirectUrl ? 'Back to your wrapped →' : 'Back to Dashboard →'
 
   const canAddMore = accounts.length < MAX_ACCOUNTS

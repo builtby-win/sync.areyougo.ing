@@ -12,6 +12,7 @@ interface Props {
   user: User
   credentialId: string
   redirectUrl?: string | null
+  mainAppUrl: string
 }
 
 interface SyncEmail {
@@ -33,7 +34,7 @@ interface SyncStatus {
   error?: string
 }
 
-export default function SyncRunner({ user, credentialId, redirectUrl }: Props) {
+export default function SyncRunner({ user, credentialId, redirectUrl, mainAppUrl }: Props) {
   const [stage, setStep] = useState<'init' | 'fetching' | 'selecting' | 'ingesting' | 'completed' | 'error'>('init')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [emails, setEmails] = useState<SyncEmail[]>([])
@@ -42,7 +43,7 @@ export default function SyncRunner({ user, credentialId, redirectUrl }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [lookbackDays, setLookbackDays] = useState(30) // Default 30
   
-  const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing')
+  const returnUrl = buildReturnUrl(redirectUrl ?? null, mainAppUrl)
   const isEmbeddedMode = isEmbedded()
 
   // Start Sync
@@ -147,6 +148,23 @@ export default function SyncRunner({ user, credentialId, redirectUrl }: Props) {
     }
   }
 
+  const handleComplete = (action: 'timeline' | 'audit') => {
+    // 1. Try postMessage to close modal
+    notifySyncComplete(statusData?.totalFound || 0, statusData?.emails.filter(e => e.ingestStatus === 'success').length || 0, action)
+    
+    // 2. Fallback: Force redirect parent window after short delay
+    // This ensures navigation happens even if postMessage is blocked/ignored
+    setTimeout(() => {
+        const targetPath = action === 'audit' ? '/settings/email-audit' : '/'
+        const targetUrl = `${mainAppUrl}${targetPath}`
+        try {
+            window.top!.location.href = targetUrl
+        } catch (e) {
+            console.error('Failed to redirect top window:', e)
+        }
+    }, 100)
+  }
+
   const formatSenderName = (sender: string) => {
     return sender.charAt(0).toUpperCase() + sender.slice(1)
   }
@@ -169,7 +187,7 @@ export default function SyncRunner({ user, credentialId, redirectUrl }: Props) {
               : 'Connecting to your email...'}
           </p>
           <p className="text-sm text-muted-foreground mt-1">
-            Found {statusData?.totalFound || 0} emails so far
+            Found {statusData?.totalFound || 0} tickets so far
           </p>
         </div>
       </div>
@@ -232,21 +250,26 @@ export default function SyncRunner({ user, credentialId, redirectUrl }: Props) {
             disabled={selectedIds.size === 0}
             className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
           >
-            Import {selectedIds.size} Tickets
+            Sync {selectedIds.size} Tickets
           </button>
         </div>
       </div>
     )
   }
 
-  if (stage === 'ingesting') {
-    const completed = emails.filter(e => e.ingestStatus === 'success' || e.ingestStatus === 'failed').length
+  if (stage === 'ingesting' || stage === 'completed') {
+    const successCount = emails.filter(e => e.ingestStatus === 'success').length
+    const failCount = emails.filter(e => e.ingestStatus === 'failed').length
+    const completed = successCount + failCount
     const total = selectedIds.size
     const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
+    const isDone = stage === 'completed'
 
     return (
       <div className="max-w-xl mx-auto py-12 px-4 text-center">
-        <h2 className="text-2xl font-bold mb-6">Importing Tickets...</h2>
+        <h2 className="text-2xl font-bold mb-6">
+          {isDone ? 'Sync Complete' : 'Syncing Tickets...'}
+        </h2>
         
         <div className="w-full bg-secondary rounded-full h-4 mb-4 overflow-hidden">
           <div 
@@ -254,77 +277,67 @@ export default function SyncRunner({ user, credentialId, redirectUrl }: Props) {
             style={{ width: `${percentage}%` }}
           />
         </div>
-        <p className="text-muted-foreground mb-8">
-          {completed} of {total} processed
-        </p>
+        <div className="mb-8">
+            <p className="text-muted-foreground">
+            {isDone 
+                ? `Successfully synced ${successCount} tickets${failCount > 0 ? `, ${failCount} failed` : ''}.`
+                : `${completed} of ${total} processed`}
+            </p>
+            {isDone && successCount > 0 && (
+                <p className="text-xs text-muted-foreground mt-1">
+                    Your tickets are being processed and will appear in your timeline shortly.
+                </p>
+            )}
+        </div>
 
-        <div className="bg-card border border-border rounded-lg p-4 text-left max-h-60 overflow-y-auto">
+        <div className="bg-card border border-border rounded-lg p-4 text-left max-h-60 overflow-y-auto mb-8">
             {emails.filter(e => selectedIds.has(e.messageId)).map(email => (
                 <div key={email.messageId} className="flex items-center justify-between py-2 text-sm border-b border-border/50 last:border-0">
                     <span className="truncate flex-1 pr-4">{email.subject}</span>
-                    {email.ingestStatus === 'pending' && <span className="text-muted-foreground">Pending</span>}
-                    {email.ingestStatus === 'sending' && <span className="text-primary animate-pulse">Importing...</span>}
-                    {email.ingestStatus === 'success' && <span className="text-success font-medium">Imported</span>}
-                    {email.ingestStatus === 'failed' && <span className="text-destructive">Failed</span>}
+                    <div className="flex-shrink-0">
+                        {email.ingestStatus === 'pending' && <span className="text-muted-foreground">Pending</span>}
+                        {email.ingestStatus === 'sending' && <span className="text-primary animate-pulse font-medium">Syncing...</span>}
+                        {email.ingestStatus === 'success' && <span className="text-success font-medium flex items-center gap-1">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                            Received
+                        </span>}
+                        {email.ingestStatus === 'failed' && <span className="text-destructive font-medium">Failed</span>}
+                    </div>
                 </div>
             ))}
         </div>
-      </div>
-    )
-  }
 
-  if (stage === 'completed') {
-    const successCount = emails.filter(e => e.ingestStatus === 'success').length
-    const failCount = emails.filter(e => e.ingestStatus === 'failed').length
-
-    return (
-      <div className="max-w-md mx-auto py-12 px-4 text-center">
-        <div className="w-16 h-16 rounded-full bg-success/20 flex items-center justify-center mx-auto mb-6">
-          <svg className="w-8 h-8 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-        </div>
-        <h2 className="text-2xl font-bold mb-2">Import Complete</h2>
-        <p className="text-muted-foreground mb-8">
-          Successfully imported {successCount} tickets.
-          {failCount > 0 && <span className="block text-destructive mt-1">{failCount} failed.</span>}
-        </p>
-
-        <div className="flex flex-col gap-3">
-            {isEmbeddedMode ? (
-                <>
-                  {failCount === 0 ? (
-                    <button
-                        onClick={() => {
-                            console.log('[SyncRunner] Clicking Go to Timeline')
-                            notifySyncComplete(statusData?.totalFound || 0, successCount, 'timeline')
-                        }}
+        {isDone && (
+            <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {isEmbeddedMode ? (
+                    <>
+                    {failCount === 0 ? (
+                        <button
+                            onClick={() => handleComplete('timeline')}
+                            className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+                        >
+                            Go to Timeline
+                        </button>
+                    ) : (
+                        <button
+                            onClick={() => handleComplete('audit')}
+                            className="w-full px-4 py-2 bg-destructive text-destructive-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+                        >
+                            View Sync Issues
+                        </button>
+                    )}
+                    </>
+                ) : (
+                    <a 
+                        href={returnUrl}
                         className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
                     >
-                        Go to Timeline
-                    </button>
-                  ) : (
-                    <button
-                        onClick={() => {
-                            console.log('[SyncRunner] Clicking View Sync Issues')
-                            notifySyncComplete(statusData?.totalFound || 0, successCount, 'audit')
-                        }}
-                        className="w-full px-4 py-2 bg-destructive text-destructive-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
-                    >
-                        View Sync Issues
-                    </button>
-                  )}
-                </>
-            ) : (
-                <a 
-                    href={returnUrl}
-                    className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
-                >
-                    Return to Dashboard
-                </a>
-            )}
-            <a href="/" className="text-sm text-muted-foreground hover:underline mt-2">Sync another account</a>
-        </div>
+                        Return to Dashboard
+                    </a>
+                )}
+                <a href="/" className="text-sm text-muted-foreground hover:underline mt-2">Sync another account</a>
+            </div>
+        )}
       </div>
     )
   }

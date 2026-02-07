@@ -149,6 +149,7 @@ const isEmbedded = Astro.url.searchParams.get('embedded') === 'true'
           user={{ id: user.id, email: user.email, name: user.name }}
           accounts={accountsForClient}
           redirectUrl={redirectUrl}
+          mainAppUrl={publicMainAppUrl}
         />
       ) : (
         <!-- No credentials - show setup wizard -->
