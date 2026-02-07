@@ -1,12 +1,8 @@
 import { eq } from 'drizzle-orm'
 import { getDb } from './db'
+import { redactPii } from './redaction/redactor'
 import { imapCredentials, syncHistory } from './schema'
-import {
-  getSession,
-  updateEmailStatus,
-  updateSession,
-  type SyncSession,
-} from './sync-sessions'
+import { type SyncSession, getSession, updateEmailStatus, updateSession } from './sync-sessions'
 
 interface IngestOptions {
   sessionId: string
@@ -29,12 +25,7 @@ function extractEmailAddress(from: string): string {
  * Runs the ingestion process for a session.
  * Iterates through pending emails and sends them to the main app.
  */
-export async function runIngestion({
-  sessionId,
-  cred,
-  mainAppUrl,
-  ingestApiKey,
-}: IngestOptions) {
+export async function runIngestion({ sessionId, cred, mainAppUrl, ingestApiKey }: IngestOptions) {
   const db = getDb()
   const session = getSession(sessionId)
 
@@ -64,11 +55,11 @@ export async function runIngestion({
         recipientEmail: cred.imapEmail,
         senderEmail: extractEmailAddress(email.from),
         subject: email.subject,
-        body: email.body,
+        body: redactPii(email.body),
         emailDate: email.date,
         userId: cred.userId,
       }
-      
+
       const response = await fetch(`${mainAppUrl}/api/ingest`, {
         method: 'POST',
         headers: {

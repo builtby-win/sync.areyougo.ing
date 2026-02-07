@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { redactPii } from './redactor'
 
 describe('redactPii', () => {
@@ -33,7 +33,7 @@ describe('redactPii', () => {
 
     it('redacts multi-word street names', () => {
       expect(redactPii('425 W 11th St.')).toBe('[STREET_ADDRESS]')
-      expect(redactPii('859 O\'Farrell St.')).toBe('[STREET_ADDRESS]')
+      expect(redactPii("859 O'Farrell St.")).toBe('[STREET_ADDRESS]')
     })
 
     it('is case-insensitive for suffixes', () => {
