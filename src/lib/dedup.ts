@@ -22,7 +22,7 @@ export async function checkAlreadyIngested(
   if (emails.length === 0) return new Set()
 
   const hashes = emails.map((e) =>
-    createEmailHash(e.subject, e.senderEmail, e.recipientEmail, e.emailDate.getTime()),
+    createEmailHash(e.subject, e.senderEmail, e.recipientEmail, Math.floor(e.emailDate.getTime() / 1000)),
   )
 
   try {
@@ -57,5 +57,5 @@ export function computeEmailHash(
   recipientEmail: string,
   emailDate: Date,
 ): string {
-  return createEmailHash(subject, senderEmail, recipientEmail, emailDate.getTime())
+  return createEmailHash(subject, senderEmail, recipientEmail, Math.floor(emailDate.getTime() / 1000))
 }
