@@ -18,6 +18,7 @@ import {
   updateSession,
 } from '../../lib/sync-sessions'
 import { verifySession } from '../../lib/verify-session'
+import { checkAlreadyIngested, computeEmailHash } from '../../lib/dedup'
 
 interface SyncRequest {
   credentialId: string
@@ -140,6 +141,43 @@ async function processSync(
 
     // Clear current sender
     updateCurrentSender(sessionId, undefined)
+
+    // Dedup: check which emails already exist in the main app
+    const session = getSession(sessionId)
+    if (session && session.emails.length > 0) {
+      const emailsForCheck = session.emails
+        .filter((e) => e.ingestStatus === 'pending')
+        .map((e) => ({
+          subject: e.subject,
+          senderEmail: extractEmailAddress(e.from),
+          recipientEmail: cred.imapEmail,
+          emailDate: new Date(e.date),
+        }))
+
+      const existingHashes = await checkAlreadyIngested(
+        mainAppUrl,
+        ingestApiKey,
+        cred.userId,
+        emailsForCheck,
+      )
+
+      if (existingHashes.size > 0) {
+        // Mark already-ingested emails as skipped
+        for (const e of session.emails) {
+          if (e.ingestStatus !== 'pending') continue
+          const hash = computeEmailHash(
+            e.subject,
+            extractEmailAddress(e.from),
+            cred.imapEmail,
+            new Date(e.date),
+          )
+          if (existingHashes.has(hash)) {
+            updateEmailStatus(sessionId, e.messageId, 'skipped', 'Already imported')
+          }
+        }
+        console.log(`[sync:${sessionId}] Dedup: ${existingHashes.size} emails already imported`)
+      }
+    }
 
     if (waitForSelection) {
       updateSession(sessionId, { status: 'waiting_for_selection' })

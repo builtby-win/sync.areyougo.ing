@@ -5,12 +5,18 @@
 
 import { eq } from 'drizzle-orm'
 import cron from 'node-cron'
+import { checkAlreadyIngested, computeEmailHash } from '../src/lib/dedup'
 import { getDb } from '../src/lib/db'
 import { shouldProcessEmail } from '../src/lib/email-filter'
 import { fetchTicketEmails } from '../src/lib/imap-client'
 import { imapCredentials, syncHistory } from '../src/lib/schema'
 
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE || '0 6 * * *' // Daily at 6am UTC
+
+function extractEmailAddress(from: string): string {
+  const match = from.match(/<([^>]+)>/)
+  return match ? match[1] : from.trim()
+}
 
 async function runSync(): Promise<void> {
   console.log('[cron] Scheduled sync started at:', new Date().toISOString())
@@ -56,15 +62,40 @@ async function runSync(): Promise<void> {
 
       console.log(`[cron] Found ${emails.length} ticket emails for user ${cred.userId}`)
 
-      const emailsForIngest = [...emails].sort((a, b) => a.date.getTime() - b.date.getTime())
+      const emailsForIngest = [...emails]
+        .filter((e) => shouldProcessEmail(e.subject, e.from))
+        .sort((a, b) => a.date.getTime() - b.date.getTime())
+
+      // Dedup: check which emails already exist in the main app
+      const existingHashes = await checkAlreadyIngested(
+        mainAppUrl,
+        ingestApiKey,
+        cred.userId,
+        emailsForIngest.map((e) => ({
+          subject: e.subject,
+          senderEmail: extractEmailAddress(e.from),
+          recipientEmail: cred.imapEmail,
+          emailDate: e.date,
+        })),
+      )
+
+      if (existingHashes.size > 0) {
+        console.log(`[cron] Dedup: ${existingHashes.size} emails already imported for ${cred.imapEmail}`)
+      }
 
       let ingestedCount = 0
 
       // POST each email to the main app's ingest endpoint
       for (const email of emailsForIngest) {
-        // Skip emails that don't look like ticket receipts
-        if (!shouldProcessEmail(email.subject, email.from)) {
-          console.log(`[cron] Skipping email: "${email.subject}" (${email.messageId})`)
+        // Skip already-imported emails
+        const hash = computeEmailHash(
+          email.subject,
+          extractEmailAddress(email.from),
+          cred.imapEmail,
+          email.date,
+        )
+        if (existingHashes.has(hash)) {
+          console.log(`[cron] Skipping already-imported: "${email.subject}" (${email.messageId})`)
           continue
         }
 

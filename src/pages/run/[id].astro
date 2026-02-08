@@ -40,6 +40,8 @@ if (creds.length === 0) {
 }
 
 const redirectUrl = Astro.url.searchParams.get('redirectUrl')
+const lookbackParam = Astro.url.searchParams.get('lookbackDays')
+const defaultLookbackDays = lookbackParam ? Math.max(1, Math.min(1825, Number(lookbackParam) || 30)) : 30
 ---
 
 <BaseLayout>
@@ -47,6 +49,7 @@ const redirectUrl = Astro.url.searchParams.get('redirectUrl')
     client:load
     user={{ id: user.id, email: user.email, name: user.name }}
     credentialId={id}
+    defaultLookbackDays={defaultLookbackDays}
     redirectUrl={redirectUrl}
     mainAppUrl={publicMainAppUrl}
   />
