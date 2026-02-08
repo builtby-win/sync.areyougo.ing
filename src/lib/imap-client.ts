@@ -326,11 +326,16 @@ export async function fetchTicketEmails(
               }
             }
 
+            // Truncate date to second precision for stable hashing
+            // (IMAP dates have second-level precision; avoid ms drift)
+            const rawDate = msg.envelope.date || new Date(0)
+            const stableDate = new Date(Math.floor(rawDate.getTime() / 1000) * 1000)
+
             const email: Email = {
               messageId: msg.envelope.messageId || `${msg.uid}@unknown`,
               from: fromName ? `${fromName} <${fromAddress}>` : fromAddress,
               subject: msg.envelope.subject || '(no subject)',
-              date: msg.envelope.date || new Date(),
+              date: stableDate,
               body: body.trim(),
             }
             emails.push(email)
