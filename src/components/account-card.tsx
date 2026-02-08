@@ -41,6 +41,7 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
   const [error, setError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [lookbackDays, setLookbackDays] = useState(30)
 
   // Update local sync time when prop changes
   useEffect(() => {
@@ -48,7 +49,10 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
   }, [credential.lastSyncAt])
 
   // Construct run URL
-  const runUrl = `/run/${credential.id}${redirectUrl ? `?redirectUrl=${encodeURIComponent(redirectUrl)}` : ''}`
+  const runParams = new URLSearchParams()
+  if (redirectUrl) runParams.set('redirectUrl', redirectUrl)
+  if (lookbackDays !== 30) runParams.set('lookbackDays', String(lookbackDays))
+  const runUrl = `/run/${credential.id}${runParams.toString() ? `?${runParams.toString()}` : ''}`
 
   const handleSyncModeChange = async (newMode: SyncMode) => {
     if (newMode === syncMode) return
@@ -220,6 +224,36 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
           {error}
         </div>
       )}
+
+      {/* Sync range selector */}
+      <div className="space-y-3">
+        <h3 className="text-sm font-medium">Sync Range</h3>
+        <div className="flex gap-2">
+          {([
+            { label: '1mo', days: 30 },
+            { label: '6mo', days: 180 },
+            { label: '1yr', days: 365 },
+            { label: '2yr', days: 730 },
+            { label: '5yr', days: 1825 },
+          ] as const).map((opt) => (
+            <button
+              key={opt.days}
+              type="button"
+              onClick={() => setLookbackDays(opt.days)}
+              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                lookbackDays === opt.days
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          How far back to search for ticket emails.
+        </p>
+      </div>
 
       {/* Manual sync action */}
       <div className="pt-2 border-t border-border">

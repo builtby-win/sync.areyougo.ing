@@ -11,6 +11,7 @@ interface User {
 interface Props {
   user: User
   credentialId: string
+  defaultLookbackDays?: number
   redirectUrl?: string | null
   mainAppUrl: string
 }
@@ -34,14 +35,14 @@ interface SyncStatus {
   error?: string
 }
 
-export default function SyncRunner({ user, credentialId, redirectUrl, mainAppUrl }: Props) {
+export default function SyncRunner({ user, credentialId, defaultLookbackDays = 30, redirectUrl, mainAppUrl }: Props) {
   const [stage, setStep] = useState<'init' | 'fetching' | 'selecting' | 'ingesting' | 'completed' | 'error'>('init')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [emails, setEmails] = useState<SyncEmail[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [statusData, setStatusData] = useState<SyncStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [lookbackDays, setLookbackDays] = useState(30) // Default 30
+  const [lookbackDays, setLookbackDays] = useState(defaultLookbackDays)
   
   const returnUrl = buildReturnUrl(redirectUrl ?? null, mainAppUrl)
   const isEmbeddedMode = isEmbedded()
@@ -123,10 +124,11 @@ export default function SyncRunner({ user, credentialId, redirectUrl, mainAppUrl
   }
 
   const toggleAll = () => {
-    if (selectedIds.size === emails.length) {
+    const pendingIds = emails.filter(e => e.ingestStatus === 'pending').map(e => e.messageId)
+    if (selectedIds.size === pendingIds.length) {
       setSelectedIds(new Set())
     } else {
-      setSelectedIds(new Set(emails.map(e => e.messageId)))
+      setSelectedIds(new Set(pendingIds))
     }
   }
 
@@ -195,6 +197,9 @@ export default function SyncRunner({ user, credentialId, redirectUrl, mainAppUrl
   }
 
   if (stage === 'selecting') {
+    const pendingEmails = emails.filter(e => e.ingestStatus === 'pending')
+    const skippedEmails = emails.filter(e => e.ingestStatus === 'skipped')
+
     return (
       <div className="max-w-2xl mx-auto py-8 px-4">
         <h1 className="text-2xl font-bold mb-2">Review Tickets</h1>
@@ -203,9 +208,9 @@ export default function SyncRunner({ user, credentialId, redirectUrl, mainAppUrl
         <div className="bg-card border border-border rounded-lg overflow-hidden">
           <div className="p-4 border-b border-border flex justify-between items-center bg-muted/30">
             <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input 
-                type="checkbox" 
-                checked={selectedIds.size === emails.length && emails.length > 0}
+              <input
+                type="checkbox"
+                checked={selectedIds.size === pendingEmails.length && pendingEmails.length > 0}
                 onChange={toggleAll}
                 className="w-4 h-4 rounded border-input text-primary focus:ring-primary"
               />
@@ -213,17 +218,18 @@ export default function SyncRunner({ user, credentialId, redirectUrl, mainAppUrl
             </label>
             <span className="text-sm text-muted-foreground">{selectedIds.size} selected</span>
           </div>
-          
+
           <div className="divide-y divide-border max-h-[60vh] overflow-y-auto">
-            {emails.length === 0 ? (
+            {pendingEmails.length === 0 && skippedEmails.length === 0 ? (
                 <div className="p-8 text-center text-muted-foreground">
                     No ticket emails found in the last {lookbackDays} days.
                 </div>
             ) : (
-                emails.map(email => (
+              <>
+                {pendingEmails.map(email => (
                 <label key={email.messageId} className="flex items-start gap-3 p-4 hover:bg-muted/50 cursor-pointer transition-colors">
-                    <input 
-                    type="checkbox" 
+                    <input
+                    type="checkbox"
                     checked={selectedIds.has(email.messageId)}
                     onChange={() => toggleSelection(email.messageId)}
                     className="mt-1 w-4 h-4 rounded border-input text-primary focus:ring-primary"
@@ -236,7 +242,31 @@ export default function SyncRunner({ user, credentialId, redirectUrl, mainAppUrl
                     </div>
                     </div>
                 </label>
-                ))
+                ))}
+                {skippedEmails.length > 0 && (
+                  <>
+                    <div className="p-3 bg-muted/50 text-xs font-medium text-muted-foreground">
+                      Already imported ({skippedEmails.length})
+                    </div>
+                    {skippedEmails.map(email => (
+                      <div key={email.messageId} className="flex items-start gap-3 p-4 opacity-50">
+                        <div className="mt-1 w-4 h-4 flex items-center justify-center">
+                          <svg className="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{email.subject}</div>
+                          <div className="text-sm text-muted-foreground flex justify-between mt-1">
+                            <span>{email.from}</span>
+                            <span>{new Date(email.date).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -245,7 +275,7 @@ export default function SyncRunner({ user, credentialId, redirectUrl, mainAppUrl
           <a href="/" className="px-4 py-2 border border-border rounded-md font-medium hover:bg-secondary transition-colors text-center">
             Cancel
           </a>
-          <button 
+          <button
             onClick={confirmSelection}
             disabled={selectedIds.size === 0}
             className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
