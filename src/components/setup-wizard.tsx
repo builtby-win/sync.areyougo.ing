@@ -172,7 +172,7 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
   const [isLoading, setIsLoading] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
   const [sampleEmails, setSampleEmails] = useState<EmailPreview[]>([])
-  const [syncMode, setSyncMode] = useState<SyncMode>('manual')
+  const [syncMode, setSyncMode] = useState<SyncMode>('auto_daily')
 
   // Real polling state for test connection
   const [testSessionId, setTestSessionId] = useState<string | null>(null)
@@ -765,54 +765,43 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
           </div>
         )}
 
-        <div className="space-y-3 mb-6">
-          <label
-            className={`flex items-start gap-3 p-4 rounded-md border cursor-pointer transition-colors ${
-              syncMode === 'manual'
-                ? 'border-primary bg-primary/5'
-                : 'border-border hover:border-muted-foreground'
-            }`}
-          >
-            <input
-              type="radio"
-              name="syncMode"
-              value="manual"
-              checked={syncMode === 'manual'}
-              onChange={() => setSyncMode('manual')}
-              className="mt-1"
-            />
-            <div>
-              <div className="font-medium">Manual Sync Only</div>
-              <p className="text-sm text-muted-foreground mt-1">
-                You control when to sync. Use the "Sync Now" button anytime to pull your latest
-                ticket emails. Great if you want to verify exactly what's being synced.
-              </p>
-            </div>
-          </label>
-
-          <label
-            className={`flex items-start gap-3 p-4 rounded-md border cursor-pointer transition-colors ${
+        <div className="mb-6">
+          {/* Primary auto-sync card */}
+          <button
+            type="button"
+            onClick={() => setSyncMode('auto_daily')}
+            className={`w-full text-left p-5 rounded-lg border-2 transition-colors ${
               syncMode === 'auto_daily'
                 ? 'border-primary bg-primary/5'
                 : 'border-border hover:border-muted-foreground'
             }`}
           >
-            <input
-              type="radio"
-              name="syncMode"
-              value="auto_daily"
-              checked={syncMode === 'auto_daily'}
-              onChange={() => setSyncMode('auto_daily')}
-              className="mt-1"
-            />
-            <div>
-              <div className="font-medium">Auto-Sync Daily</div>
-              <p className="text-sm text-muted-foreground mt-1">
-                We'll automatically check for new ticket emails once per day (at 6am UTC). You can
-                still use manual sync anytime. You can change this later.
-              </p>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="font-semibold">Auto-Sync Daily</span>
+              <span className="text-xs bg-primary/15 text-primary px-2 py-0.5 rounded-full font-medium">
+                Recommended
+              </span>
             </div>
-          </label>
+            <p className="text-sm text-muted-foreground">
+              We'll automatically check for new ticket emails once per day (at 6am UTC). You can
+              still sync manually anytime. You can change this later.
+            </p>
+          </button>
+
+          {/* Secondary manual option */}
+          <div className="mt-3 text-center">
+            <button
+              type="button"
+              onClick={() => setSyncMode('manual')}
+              className={`text-sm transition-colors ${
+                syncMode === 'manual'
+                  ? 'text-primary font-medium'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              I'd rather sync manually
+            </button>
+          </div>
         </div>
 
         <div className="flex gap-3">

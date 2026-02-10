@@ -187,32 +187,48 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex gap-2">
-        <a
-          href={runUrl}
-          className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition-opacity text-center"
-        >
-          Manual Sync
-        </a>
-        <button
-          type="button"
-          onClick={() => handleSyncModeChange(syncMode === 'auto_daily' ? 'manual' : 'auto_daily')}
-          disabled={isUpdatingSyncMode}
-          className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            syncMode === 'auto_daily'
-              ? 'bg-success/20 text-success border border-success/30'
-              : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
-          } disabled:opacity-50`}
-        >
-          {syncMode === 'auto_daily' ? 'Auto-Sync On' : 'Auto-Sync Off'}
-        </button>
-      </div>
-      {syncMode === 'auto_daily' && (
-        <p className="text-xs text-muted-foreground">
-          Checks for new ticket emails once per day at 6am UTC.
+      {/* Auto-sync toggle */}
+      <button
+        type="button"
+        onClick={() => handleSyncModeChange(syncMode === 'auto_daily' ? 'manual' : 'auto_daily')}
+        disabled={isUpdatingSyncMode}
+        className={`w-full text-left p-4 rounded-lg border-2 transition-colors ${
+          syncMode === 'auto_daily'
+            ? 'border-primary bg-primary/5'
+            : 'border-border hover:border-muted-foreground'
+        } disabled:opacity-50`}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-sm">Auto-Sync Daily</span>
+            {syncMode !== 'auto_daily' && (
+              <span className="text-xs bg-primary/15 text-primary px-2 py-0.5 rounded-full font-medium">
+                Recommended
+              </span>
+            )}
+          </div>
+          <div className={`w-9 h-5 rounded-full transition-colors relative ${
+            syncMode === 'auto_daily' ? 'bg-primary' : 'bg-muted-foreground/30'
+          }`}>
+            <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+              syncMode === 'auto_daily' ? 'translate-x-4' : 'translate-x-0.5'
+            }`} />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1">
+          {syncMode === 'auto_daily'
+            ? 'Checks for new ticket emails once per day at 6am UTC.'
+            : 'Enable to automatically check for new tickets daily.'}
         </p>
-      )}
+      </button>
+
+      {/* Manual sync action */}
+      <a
+        href={runUrl}
+        className="block w-full px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm font-medium hover:bg-secondary/80 transition-colors text-center"
+      >
+        Sync Now
+      </a>
     </div>
   )
 }

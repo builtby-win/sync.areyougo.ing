@@ -79,6 +79,7 @@ export default function SyncSettings({ user, credentials, onUpdateSettings, redi
   const [showLookbackSelector, setShowLookbackSelector] = useState(false)
   const [rateLimitedUntil, setRateLimitedUntil] = useState<Date | null>(null)
   const [showCompletionModal, setShowCompletionModal] = useState(false)
+  const [modalAutoSyncEnabled, setModalAutoSyncEnabled] = useState(false)
   const returnUrl = buildReturnUrl(redirectUrl ?? null, 'https://areyougo.ing/wrapped')
 
   // Update local sync time when prop changes
@@ -340,37 +341,37 @@ export default function SyncSettings({ user, credentials, onUpdateSettings, redi
       {/* Sync mode toggle */}
       <div className="space-y-3">
         <h3 className="text-sm font-medium">Sync Mode</h3>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => handleSyncModeChange('manual')}
-            disabled={isUpdatingSyncMode}
-            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              syncMode === 'manual'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
-            } disabled:opacity-50`}
-          >
-            Manual Only
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSyncModeChange('auto_daily')}
-            disabled={isUpdatingSyncMode}
-            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              syncMode === 'auto_daily'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
-            } disabled:opacity-50`}
-          >
-            Auto-Sync Daily
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {syncMode === 'auto_daily'
-            ? 'We check for new ticket emails once per day at 6am UTC.'
-            : 'Use the sync button below to manually pull ticket emails.'}
-        </p>
+        <button
+          type="button"
+          onClick={() => handleSyncModeChange(syncMode === 'auto_daily' ? 'manual' : 'auto_daily')}
+          disabled={isUpdatingSyncMode}
+          className={`w-full text-left p-4 rounded-lg border-2 transition-colors ${
+            syncMode === 'auto_daily'
+              ? 'border-primary bg-primary/5'
+              : 'border-border hover:border-muted-foreground'
+          } disabled:opacity-50`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-sm">Auto-Sync Daily</span>
+              <span className="text-xs bg-primary/15 text-primary px-2 py-0.5 rounded-full font-medium">
+                Recommended
+              </span>
+            </div>
+            <div className={`w-9 h-5 rounded-full transition-colors relative ${
+              syncMode === 'auto_daily' ? 'bg-primary' : 'bg-muted-foreground/30'
+            }`}>
+              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                syncMode === 'auto_daily' ? 'translate-x-4' : 'translate-x-0.5'
+              }`} />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            {syncMode === 'auto_daily'
+              ? 'We check for new ticket emails once per day at 6am UTC.'
+              : 'Enable to automatically check for new tickets daily.'}
+          </p>
+        </button>
       </div>
 
       {/* Error display */}
@@ -630,6 +631,31 @@ export default function SyncSettings({ user, credentials, onUpdateSettings, redi
                   </li>
                 )}
               </ul>
+              {syncMode === 'manual' && !modalAutoSyncEnabled && (
+                <div className="mt-3 p-3 bg-primary/5 border border-primary/20 rounded-md flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    Tip: Enable auto-sync to catch new tickets automatically.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await handleSyncModeChange('auto_daily')
+                      setModalAutoSyncEnabled(true)
+                    }}
+                    className="flex-shrink-0 text-xs text-primary font-medium hover:underline"
+                  >
+                    Enable
+                  </button>
+                </div>
+              )}
+              {syncMode === 'manual' && modalAutoSyncEnabled && (
+                <div className="mt-3 p-3 bg-success/10 border border-success/20 rounded-md flex items-center gap-2 text-xs text-success font-medium">
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Auto-sync enabled — we'll check for new tickets daily.
+                </div>
+              )}
               <p className="text-muted-foreground mt-2">
                 Return to your wrapped or continue syncing more tickets.
               </p>
