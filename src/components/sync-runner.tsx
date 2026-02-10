@@ -14,6 +14,7 @@ interface Props {
   defaultLookbackDays?: number
   redirectUrl?: string | null
   mainAppUrl: string
+  syncMode?: string
 }
 
 interface SyncEmail {
@@ -56,7 +57,7 @@ const DATE_PRESETS = [
   { label: '5 years', days: 1825 },
 ] as const
 
-export default function SyncRunner({ user, credentialId, defaultLookbackDays = 30, redirectUrl, mainAppUrl }: Props) {
+export default function SyncRunner({ user, credentialId, defaultLookbackDays = 30, redirectUrl, mainAppUrl, syncMode }: Props) {
   const [stage, setStep] = useState<'configure' | 'fetching' | 'selecting' | 'ingesting' | 'completed' | 'error'>('configure')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [emails, setEmails] = useState<SyncEmail[]>([])
@@ -69,6 +70,8 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
   const [sinceDate, setSinceDate] = useState(() => toDateInputValue(new Date(Date.now() - defaultLookbackDays * 24 * 60 * 60 * 1000)))
   const [beforeDate, setBeforeDate] = useState(() => toDateInputValue(new Date()))
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false)
+  const [enablingAutoSync, setEnablingAutoSync] = useState(false)
 
   const returnUrl = buildReturnUrl(redirectUrl ?? null, mainAppUrl)
   const isEmbeddedMode = isEmbedded()
@@ -536,6 +539,38 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
                 </div>
             ))}
         </div>
+
+        {isDone && syncMode === 'manual' && !autoSyncEnabled && (
+            <div className="bg-card border border-border rounded-lg p-4 mb-6 flex items-center justify-between gap-4 text-left">
+                <p className="text-sm text-muted-foreground">Never miss a ticket — enable auto-sync to check for new emails daily.</p>
+                <button
+                    onClick={async () => {
+                        setEnablingAutoSync(true)
+                        try {
+                            const res = await fetch('/api/settings', {
+                                method: 'PATCH',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ credentialId, syncMode: 'auto_daily' }),
+                            })
+                            if (res.ok) setAutoSyncEnabled(true)
+                        } catch {}
+                        setEnablingAutoSync(false)
+                    }}
+                    disabled={enablingAutoSync}
+                    className="flex-shrink-0 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+                >
+                    {enablingAutoSync ? 'Enabling...' : 'Enable Auto-Sync'}
+                </button>
+            </div>
+        )}
+        {isDone && syncMode === 'manual' && autoSyncEnabled && (
+            <div className="bg-success/10 border border-success/20 rounded-lg p-4 mb-6 flex items-center gap-2 text-sm text-success font-medium">
+                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Auto-sync enabled
+            </div>
+        )}
 
         {isDone && (
             <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
