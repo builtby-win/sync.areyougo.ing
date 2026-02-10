@@ -45,10 +45,15 @@ export function redactPii(text: string): string {
   // We look for Number + Name(s) + Suffix, potentially followed by a period.
   const streetSuffixes =
     'St|Street|Ave|Avenue|Way|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court|Pl|Place|Ter|Terrace'
-  // Use (?!\w) instead of \b at the end to allow for optional period
   // Included ' for cases like O'Farrell
+  // The suffix must not be followed by more words ending in another suffix,
+  // which prevents partial matches like "30 St." in "30 St. John Street"
+  const suffixGroup = `(?:${streetSuffixes})`
+  // (?<!\.) prevents matching digits after a decimal point as a house number
+  // (e.g. "$661.10 Downing Street" should NOT redact "10 Downing Street" and eat the cents)
   const addressPattern = new RegExp(
-    `\\b(\\d+)\\s+([a-zA-Z0-9'\\.]+(?:\\s+[a-zA-Z0-9'\\.]+)*)\\s+(${streetSuffixes})\\b\\.?`,
+    `(?<!\\.)\\b(\\d+)\\s+([a-zA-Z0-9'\\.]+(?:\\s+[a-zA-Z0-9'\\.]+)*)\\s+(${streetSuffixes})\\b\\.?` +
+    `(?!\\s+[a-zA-Z0-9'\\.]+(?:\\s+[a-zA-Z0-9'\\.]+)*\\s+${suffixGroup}\\b)`,
     'gi',
   )
 

@@ -21,6 +21,7 @@ interface SyncEmail {
   from: string
   subject: string
   date: string
+  body: string
   ingestStatus: 'pending' | 'sending' | 'success' | 'failed' | 'skipped'
   ingestError?: string
 }
@@ -35,15 +36,40 @@ interface SyncStatus {
   error?: string
 }
 
+const TICKET_KEYWORDS = ['ticket', 'order', 'confirmation', 'confirmed', 'booking']
+
+const KNOWN_PROVIDERS = [
+  'Ticketmaster', 'Eventbrite', 'AXS', 'StubHub', 'Vivid Seats',
+  'DICE', 'Front Gate Tickets', 'Tixr', 'See Tickets', 'TicketWeb',
+  'Luma', 'Resident Advisor', 'Skiddle',
+]
+
+function toDateInputValue(date: Date): string {
+  return date.toISOString().split('T')[0]
+}
+
+const DATE_PRESETS = [
+  { label: '1 month', days: 30 },
+  { label: '6 months', days: 180 },
+  { label: '1 year', days: 365 },
+  { label: '2 years', days: 730 },
+  { label: '5 years', days: 1825 },
+] as const
+
 export default function SyncRunner({ user, credentialId, defaultLookbackDays = 30, redirectUrl, mainAppUrl }: Props) {
-  const [stage, setStep] = useState<'init' | 'fetching' | 'selecting' | 'ingesting' | 'completed' | 'error'>('init')
+  const [stage, setStep] = useState<'configure' | 'fetching' | 'selecting' | 'ingesting' | 'completed' | 'error'>('configure')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [emails, setEmails] = useState<SyncEmail[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [statusData, setStatusData] = useState<SyncStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lookbackDays, setLookbackDays] = useState(defaultLookbackDays)
-  
+  const [searchMode, setSearchMode] = useState<'default' | 'search'>('default')
+  const [searchTerm, setSearchTerm] = useState('')
+  const [sinceDate, setSinceDate] = useState(() => toDateInputValue(new Date(Date.now() - defaultLookbackDays * 24 * 60 * 60 * 1000)))
+  const [beforeDate, setBeforeDate] = useState(() => toDateInputValue(new Date()))
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
   const returnUrl = buildReturnUrl(redirectUrl ?? null, mainAppUrl)
   const isEmbeddedMode = isEmbedded()
 
@@ -52,15 +78,21 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
     setStep('fetching')
     setError(null)
     try {
+      const payload: Record<string, unknown> = {
+        credentialId,
+        lookbackDays,
+        sinceDate,
+        beforeDate,
+        dryRun: false,
+        waitForSelection: true,
+      }
+      if (searchMode === 'search' && searchTerm.trim()) {
+        payload.searchTerm = searchTerm.trim()
+      }
       const res = await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          credentialId,
-          lookbackDays,
-          dryRun: false,
-          waitForSelection: true,
-        }),
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to start sync')
@@ -108,13 +140,6 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
 
     return () => clearInterval(interval)
   }, [sessionId, selectedIds.size])
-
-  // Initial auto-start
-  useEffect(() => {
-    if (stage === 'init') {
-      startSync()
-    }
-  }, [stage])
 
   const toggleSelection = (id: string) => {
     const next = new Set(selectedIds)
@@ -171,8 +196,143 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
     return sender.charAt(0).toUpperCase() + sender.slice(1)
   }
 
+  const applyPreset = (days: number) => {
+    setSinceDate(toDateInputValue(new Date(Date.now() - days * 24 * 60 * 60 * 1000)))
+    setBeforeDate(toDateInputValue(new Date()))
+  }
+
   // Render Helpers
-  if (stage === 'init' || stage === 'fetching') {
+  if (stage === 'configure') {
+    const canStart = searchMode === 'default' || searchTerm.trim().length > 0
+    return (
+      <div className="max-w-md mx-auto py-12 px-4">
+        <h1 className="text-2xl font-bold mb-6 text-center">Sync Tickets</h1>
+
+        {/* Mode toggle */}
+        <div className="flex rounded-lg border border-border overflow-hidden mb-6">
+          <button
+            onClick={() => setSearchMode('default')}
+            className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+              searchMode === 'default'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-card text-muted-foreground hover:bg-muted/50'
+            }`}
+          >
+            Known Providers
+          </button>
+          <button
+            onClick={() => setSearchMode('search')}
+            className={`flex-1 px-4 py-2 text-sm font-medium transition-colors ${
+              searchMode === 'search'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-card text-muted-foreground hover:bg-muted/50'
+            }`}
+          >
+            Custom Search
+          </button>
+        </div>
+
+        {searchMode === 'default' ? (
+          <div className="mb-6">
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {KNOWN_PROVIDERS.map((name) => (
+                <span
+                  key={name}
+                  className="px-2 py-0.5 bg-muted text-muted-foreground text-xs rounded-full border border-border"
+                >
+                  {name}
+                </span>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Don't see your provider? Use <button type="button" onClick={() => setSearchMode('search')} className="text-primary hover:underline">Custom Search</button> to find emails from any sender.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4 mb-6">
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && canStart) startSync() }}
+              placeholder="e.g. coachella, stubhub, united airlines"
+              className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              maxLength={200}
+              autoFocus
+            />
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">
+                Emails must also contain one of these in the subject:
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {TICKET_KEYWORDS.map((kw) => (
+                  <span
+                    key={kw}
+                    className="px-2 py-0.5 bg-muted text-muted-foreground text-xs rounded-full border border-border"
+                  >
+                    {kw}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Date range */}
+        <div className="mb-6 space-y-3">
+          <h3 className="text-sm font-medium">Date Range</h3>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="text-xs text-muted-foreground">From</label>
+              <input
+                type="date"
+                value={sinceDate}
+                onChange={(e) => setSinceDate(e.target.value)}
+                className="w-full px-3 py-1.5 border border-border rounded-md bg-background text-foreground text-sm"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="text-xs text-muted-foreground">To</label>
+              <input
+                type="date"
+                value={beforeDate}
+                onChange={(e) => setBeforeDate(e.target.value)}
+                className="w-full px-3 py-1.5 border border-border rounded-md bg-background text-foreground text-sm"
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {DATE_PRESETS.map((preset) => (
+              <button
+                key={preset.days}
+                type="button"
+                onClick={() => applyPreset(preset.days)}
+                className="px-2.5 py-1 text-xs rounded-md bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          onClick={startSync}
+          disabled={!canStart}
+          className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+        >
+          Start Search
+        </button>
+      </div>
+    )
+  }
+
+  if (stage === 'fetching') {
+    const progressLabel = searchMode === 'search' && searchTerm
+      ? `Searching '${searchTerm}'...`
+      : statusData?.currentSender
+        ? `Scanning ${formatSenderName(statusData.currentSender)}`
+        : 'Connecting to your email...'
+
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] space-y-4">
         <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
@@ -183,11 +343,7 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
         </div>
         <div className="text-center">
           <h2 className="text-xl font-semibold mb-2">Searching for Tickets...</h2>
-          <p className="text-muted-foreground">
-            {statusData?.currentSender 
-              ? `Scanning ${formatSenderName(statusData.currentSender)}` 
-              : 'Connecting to your email...'}
-          </p>
+          <p className="text-muted-foreground">{progressLabel}</p>
           <p className="text-sm text-muted-foreground mt-1">
             Found {statusData?.totalFound || 0} tickets so far
           </p>
@@ -226,35 +382,17 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
                 </div>
             ) : (
               <>
-                {pendingEmails.map(email => (
-                <label key={email.messageId} className="flex items-start gap-3 p-4 hover:bg-muted/50 cursor-pointer transition-colors">
-                    <input
-                    type="checkbox"
-                    checked={selectedIds.has(email.messageId)}
-                    onChange={() => toggleSelection(email.messageId)}
-                    className="mt-1 w-4 h-4 rounded border-input text-primary focus:ring-primary"
-                    />
-                    <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{email.subject}</div>
-                    <div className="text-sm text-muted-foreground flex justify-between mt-1">
-                        <span>{email.from}</span>
-                        <span>{new Date(email.date).toLocaleDateString()}</span>
-                    </div>
-                    </div>
-                </label>
-                ))}
-                {skippedEmails.length > 0 && (
-                  <>
-                    <div className="p-3 bg-muted/50 text-xs font-medium text-muted-foreground">
-                      Already imported ({skippedEmails.length})
-                    </div>
-                    {skippedEmails.map(email => (
-                      <div key={email.messageId} className="flex items-start gap-3 p-4 opacity-50">
-                        <div className="mt-1 w-4 h-4 flex items-center justify-center">
-                          <svg className="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                          </svg>
-                        </div>
+                {pendingEmails.map(email => {
+                  const isExpanded = expandedId === email.messageId
+                  return (
+                    <div key={email.messageId}>
+                      <div className="flex items-start gap-3 p-4 hover:bg-muted/50 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(email.messageId)}
+                          onChange={() => toggleSelection(email.messageId)}
+                          className="mt-1 w-4 h-4 rounded border-input text-primary focus:ring-primary cursor-pointer"
+                        />
                         <div className="flex-1 min-w-0">
                           <div className="font-medium truncate">{email.subject}</div>
                           <div className="text-sm text-muted-foreground flex justify-between mt-1">
@@ -262,8 +400,70 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
                             <span>{new Date(email.date).toLocaleDateString()}</span>
                           </div>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedId(isExpanded ? null : email.messageId)}
+                          className="mt-0.5 p-1 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                          title={isExpanded ? 'Collapse' : 'Preview email'}
+                        >
+                          <svg className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
                       </div>
-                    ))}
+                      {isExpanded && (
+                        <div className="px-4 pb-4 ml-10">
+                          <div className="bg-muted/50 border border-border rounded-md p-3 text-xs text-muted-foreground whitespace-pre-wrap max-h-60 overflow-y-auto font-mono leading-relaxed">
+                            {email.body || '(no body)'}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+                {skippedEmails.length > 0 && (
+                  <>
+                    <div className="p-3 bg-muted/50 text-xs font-medium text-muted-foreground">
+                      Already imported ({skippedEmails.length})
+                    </div>
+                    {skippedEmails.map(email => {
+                      const isExpanded = expandedId === email.messageId
+                      return (
+                        <div key={email.messageId}>
+                          <div className="flex items-start gap-3 p-4 opacity-50">
+                            <div className="mt-1 w-4 h-4 flex items-center justify-center">
+                              <svg className="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium truncate">{email.subject}</div>
+                              <div className="text-sm text-muted-foreground flex justify-between mt-1">
+                                <span>{email.from}</span>
+                                <span>{new Date(email.date).toLocaleDateString()}</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedId(isExpanded ? null : email.messageId)}
+                              className="mt-0.5 p-1 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
+                              title={isExpanded ? 'Collapse' : 'Preview email'}
+                            >
+                              <svg className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                          </div>
+                          {isExpanded && (
+                            <div className="px-4 pb-4 ml-10">
+                              <div className="bg-muted/50 border border-border rounded-md p-3 text-xs text-muted-foreground whitespace-pre-wrap max-h-60 overflow-y-auto font-mono leading-relaxed">
+                                {email.body || '(no body)'}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </>
                 )}
               </>

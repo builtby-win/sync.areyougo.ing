@@ -160,19 +160,17 @@ const isEmbedded = Astro.url.searchParams.get('embedded') === 'true'
         />
       )}
 
-      {/* Hide transparency notice in embedded mode for cleaner experience */}
-      {!isEmbedded && (
-        <div class="mt-8 p-4 bg-card/50 rounded-lg border border-border">
-          <h3 class="font-semibold mb-2 text-sm">Privacy & Transparency</h3>
-          <ul class="text-sm text-muted-foreground space-y-1">
-            <li>* Your password is encrypted and never logged</li>
-            <li>* We only read emails from <a href="https://github.com/builtby-win/sync.areyougo.ing/blob/main/src/lib/approved-senders.ts" target="_blank" class="text-primary hover:underline">approved ticket vendors</a></li>
-            <li>* Use an app-specific password (not your main password)</li>
-            <li>* You can delete your data anytime</li>
-            <li>* This code is <a href="https://github.com/builtby-win/sync.areyougo.ing" target="_blank" class="text-primary hover:underline">open source</a></li>
-          </ul>
-        </div>
-      )}
+      <div class="mt-8 p-4 bg-card/50 rounded-lg border border-border">
+        <h3 class="font-semibold mb-2 text-sm">Privacy & Transparency</h3>
+        <p class="text-sm text-muted-foreground mb-2">We know giving an app access to your inbox is a big ask. Here's how we earn that trust:</p>
+        <ul class="text-sm text-muted-foreground space-y-1">
+          <li>* We never see your real password — you use an app-specific password, which is encrypted and can be removed at any time.</li>
+          <li>* We only read emails from <a href="https://github.com/builtby-win/sync.areyougo.ing/blob/main/src/lib/approved-senders.ts" target="_blank" class="text-primary hover:underline">approved ticket providers</a> by default, and custom searches still require a ticket keyword match</li>
+          <li>* You can review and approve every email before it's synced — nothing is sent without your say-so</li>
+          <li>* Sensitive info (including payment details, ticket codes, etc.) is automatically redacted and processed emails are deleted within a week</li>
+          <li>* All of this is verifiable — the entire ingestion codebase is <a href="https://github.com/builtby-win/sync.areyougo.ing" target="_blank" class="text-primary hover:underline">open source</a></li>
+        </ul>
+      </div>
     </div>
   </div>
 </BaseLayout>
