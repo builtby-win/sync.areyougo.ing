@@ -41,7 +41,6 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
   const [error, setError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [lookbackDays, setLookbackDays] = useState(30)
 
   // Update local sync time when prop changes
   useEffect(() => {
@@ -51,7 +50,6 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
   // Construct run URL
   const runParams = new URLSearchParams()
   if (redirectUrl) runParams.set('redirectUrl', redirectUrl)
-  if (lookbackDays !== 30) runParams.set('lookbackDays', String(lookbackDays))
   const runUrl = `/run/${credential.id}${runParams.toString() ? `?${runParams.toString()}` : ''}`
 
   const handleSyncModeChange = async (newMode: SyncMode) => {
@@ -182,42 +180,6 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
         </div>
       )}
 
-      {/* Sync mode toggle */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium">Sync Mode</h3>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => handleSyncModeChange('manual')}
-            disabled={isUpdatingSyncMode}
-            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              syncMode === 'manual'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
-            } disabled:opacity-50`}
-          >
-            Manual Only
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSyncModeChange('auto_daily')}
-            disabled={isUpdatingSyncMode}
-            className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              syncMode === 'auto_daily'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
-            } disabled:opacity-50`}
-          >
-            Auto-Sync Daily
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {syncMode === 'auto_daily'
-            ? 'We check for new ticket emails once per day at 6am UTC.'
-            : 'Use the sync button below to manually pull ticket emails.'}
-        </p>
-      </div>
-
       {/* Error display */}
       {error && (
         <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md text-sm text-destructive">
@@ -225,48 +187,32 @@ export default function AccountCard({ user, credential, onUpdate, onDelete, redi
         </div>
       )}
 
-      {/* Sync range selector */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium">Sync Range</h3>
-        <div className="flex gap-2">
-          {([
-            { label: '1mo', days: 30 },
-            { label: '6mo', days: 180 },
-            { label: '1yr', days: 365 },
-            { label: '2yr', days: 730 },
-            { label: '5yr', days: 1825 },
-          ] as const).map((opt) => (
-            <button
-              key={opt.days}
-              type="button"
-              onClick={() => setLookbackDays(opt.days)}
-              className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                lookbackDays === opt.days
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          How far back to search for ticket emails.
-        </p>
-      </div>
-
-      {/* Manual sync action */}
-      <div className="pt-2 border-t border-border">
+      {/* Actions */}
+      <div className="flex gap-2">
         <a
           href={runUrl}
-          className="block w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity text-center"
+          className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition-opacity text-center"
         >
-          Sync Now
+          Manual Sync
         </a>
-        <p className="text-xs text-muted-foreground mt-2 text-center">
-          You can select which emails to import.
-        </p>
+        <button
+          type="button"
+          onClick={() => handleSyncModeChange(syncMode === 'auto_daily' ? 'manual' : 'auto_daily')}
+          disabled={isUpdatingSyncMode}
+          className={`flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            syncMode === 'auto_daily'
+              ? 'bg-success/20 text-success border border-success/30'
+              : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
+          } disabled:opacity-50`}
+        >
+          {syncMode === 'auto_daily' ? 'Auto-Sync On' : 'Auto-Sync Off'}
+        </button>
       </div>
+      {syncMode === 'auto_daily' && (
+        <p className="text-xs text-muted-foreground">
+          Checks for new ticket emails once per day at 6am UTC.
+        </p>
+      )}
     </div>
   )
 }

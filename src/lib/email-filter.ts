@@ -1,6 +1,6 @@
 import { isApprovedSender } from './approved-senders'
 
-const TICKET_KEYWORDS = ['order', 'ticket', 'receipt']
+export const TICKET_KEYWORDS = ['order', 'ticket', 'receipt', 'confirmation', 'confirmed', 'booking']
 
 export function isLikelyTicketEmail(subject: string): boolean {
   const lowerSubject = subject.toLowerCase()

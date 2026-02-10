@@ -40,6 +40,26 @@ describe('redactPii', () => {
       expect(redactPii('123 Main st')).toBe('[STREET_ADDRESS]')
       expect(redactPii('456 Oak ROAD')).toBe('[STREET_ADDRESS]')
     })
+
+    it('redacts full address when street name contains a suffix-like word', () => {
+      expect(redactPii('30 St. John Street')).toBe('[STREET_ADDRESS]')
+      expect(redactPii('100 St. James Ave')).toBe('[STREET_ADDRESS]')
+    })
+
+    it('does not eat price cents when followed by a street-like name', () => {
+      // "10" after a decimal is cents, not a house number — entire price + street name preserved
+      expect(redactPii('$661.10 Downing Street, London')).toBe('$661.10 Downing Street, London')
+      expect(redactPii('Total: $50.25 Baker Street')).toBe('Total: $50.25 Baker Street')
+    })
+
+    it('still redacts real addresses after prices', () => {
+      // "250" is clearly a house number (not after a decimal), so it gets redacted
+      expect(redactPii('Paid $99.99 250 Main St')).toBe('Paid $99.99 [STREET_ADDRESS]')
+    })
+
+    it('redacts standalone addresses that happen to start with common numbers', () => {
+      expect(redactPii('10 Downing Street')).toBe('[STREET_ADDRESS]')
+    })
   })
 
   describe('CVC Redaction', () => {

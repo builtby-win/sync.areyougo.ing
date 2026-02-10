@@ -3,8 +3,9 @@ import { and, eq } from 'drizzle-orm'
 import { APPROVED_SENDERS } from '../../lib/approved-senders'
 import { getDb } from '../../lib/db'
 import { shouldProcessEmail } from '../../lib/email-filter'
-import { fetchTicketEmails } from '../../lib/imap-client'
+import { fetchTicketEmails, searchEmailsByQuery } from '../../lib/imap-client'
 import { runIngestion } from '../../lib/ingest'
+import { redactPii } from '../../lib/redaction/redactor'
 import { imapCredentials, syncHistory } from '../../lib/schema'
 import {
   addEmailToSession,
@@ -25,6 +26,9 @@ interface SyncRequest {
   lookbackDays: number
   dryRun: boolean
   waitForSelection?: boolean
+  searchTerm?: string
+  sinceDate?: string
+  beforeDate?: string
 }
 
 interface EmailForIngest {
@@ -74,70 +78,89 @@ async function processSync(
   mainAppUrl: string,
   ingestApiKey: string | undefined,
   waitForSelection = false,
+  searchTerm?: string,
+  sinceDate?: string,
+  beforeDate?: string,
 ) {
   const db = getDb()
 
   try {
-    // Fetch emails from approved senders with progress callbacks
-    await fetchTicketEmails(
-      {
-        host: cred.host,
-        port: cred.port,
-        email: cred.imapEmail,
-        encryptedPassword: cred.encryptedPassword,
-        iv: cred.iv,
-        lastSyncAt: cred.lastSyncAt,
+    // Progress callbacks shared by both modes
+    const progressCallbacks = {
+      onConnecting: () => {
+        console.log(`[sync:${sessionId}] Connecting...`)
+        updateConnectionState(sessionId, 'connecting')
       },
-      encryptionKey,
-      { lookbackDays },
-      {
-        onConnecting: () => {
-          console.log(`[sync:${sessionId}] Connecting...`)
-          updateConnectionState(sessionId, 'connecting')
-        },
-        onAuthenticating: () => {
-          console.log(`[sync:${sessionId}] Authenticating...`)
-          updateConnectionState(sessionId, 'authenticating')
-        },
-        onConnected: () => {
-          console.log(`[sync:${sessionId}] Connected!`)
-          updateConnectionState(sessionId, 'connected')
-        },
-        onConnectionError: (error) => {
-          console.error(`[sync:${sessionId}] Connection error:`, error)
-          updateConnectionState(sessionId, 'error', error.message)
-        },
-        onSenderStart: (sender) => {
-          console.log(`[sync:${sessionId}] Searching ${sender}...`)
-          updateCurrentSender(sessionId, sender)
-        },
-        onSenderComplete: (sender, emails) => {
-          // Filter out non-ticket emails
-          const ticketEmails = emails.filter((e) => shouldProcessEmail(e.subject, e.from))
-
-          console.log(
-            `[sync:${sessionId}] Found ${emails.length} emails from ${sender} (${ticketEmails.length} tickets)`,
-          )
-          markSenderCompleted(sessionId, sender)
-
-          // Add emails to session immediately for progressive display
-          for (const email of ticketEmails) {
-            addEmailToSession(sessionId, {
-              messageId: email.messageId,
-              from: email.from,
-              subject: email.subject,
-              date: email.date.toISOString(),
-              body: email.body,
-              ingestStatus: 'pending',
-            })
-          }
-        },
-        onError: (sender, error) => {
-          console.error(`[sync:${sessionId}] Error searching ${sender}:`, error)
-          markSenderCompleted(sessionId, sender)
-        },
+      onAuthenticating: () => {
+        console.log(`[sync:${sessionId}] Authenticating...`)
+        updateConnectionState(sessionId, 'authenticating')
       },
-    )
+      onConnected: () => {
+        console.log(`[sync:${sessionId}] Connected!`)
+        updateConnectionState(sessionId, 'connected')
+      },
+      onConnectionError: (error: Error) => {
+        console.error(`[sync:${sessionId}] Connection error:`, error)
+        updateConnectionState(sessionId, 'error', error.message)
+      },
+      onSenderStart: (sender: string) => {
+        console.log(`[sync:${sessionId}] Searching ${sender}...`)
+        updateCurrentSender(sessionId, sender)
+      },
+      onSenderComplete: (sender: string, emails: import('../../lib/imap-client').Email[]) => {
+        // In search mode, keyword filtering is already done in searchEmailsByQuery
+        const ticketEmails = searchTerm
+          ? emails
+          : emails.filter((e) => shouldProcessEmail(e.subject, e.from))
+
+        console.log(
+          `[sync:${sessionId}] Found ${emails.length} emails from ${sender} (${ticketEmails.length} tickets)`,
+        )
+        markSenderCompleted(sessionId, sender)
+
+        for (const email of ticketEmails) {
+          addEmailToSession(sessionId, {
+            messageId: email.messageId,
+            from: email.from,
+            subject: email.subject,
+            date: email.date.toISOString(),
+            body: redactPii(email.body),
+            ingestStatus: 'pending',
+          })
+        }
+      },
+      onError: (sender: string, error: Error) => {
+        console.error(`[sync:${sessionId}] Error searching ${sender}:`, error)
+        markSenderCompleted(sessionId, sender)
+      },
+    }
+
+    const imapCreds = {
+      host: cred.host,
+      port: cred.port,
+      email: cred.imapEmail,
+      encryptedPassword: cred.encryptedPassword,
+      iv: cred.iv,
+      lastSyncAt: cred.lastSyncAt,
+    }
+
+    if (searchTerm) {
+      // Power search mode: search by user query + ticket keyword filter
+      await searchEmailsByQuery(
+        imapCreds,
+        encryptionKey,
+        { lookbackDays, sinceDate, beforeDate, searchTerm },
+        progressCallbacks,
+      )
+    } else {
+      // Default mode: search approved senders
+      await fetchTicketEmails(
+        imapCreds,
+        encryptionKey,
+        { lookbackDays, sinceDate, beforeDate },
+        progressCallbacks,
+      )
+    }
 
     // Clear current sender
     updateCurrentSender(sessionId, undefined)
@@ -233,7 +256,7 @@ export const POST: APIRoute = async ({ request }) => {
 
     // Parse request body
     const body = (await request.json()) as SyncRequest
-    const { credentialId, lookbackDays, dryRun, waitForSelection } = body
+    const { credentialId, lookbackDays, dryRun, waitForSelection, searchTerm: rawSearchTerm, sinceDate, beforeDate } = body
 
     if (!credentialId) {
       return new Response(JSON.stringify({ success: false, error: 'credentialId is required' }), {
@@ -247,6 +270,24 @@ export const POST: APIRoute = async ({ request }) => {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       })
+    }
+
+    // Validate searchTerm if provided
+    let searchTerm: string | undefined
+    if (rawSearchTerm !== undefined) {
+      if (typeof rawSearchTerm !== 'string' || rawSearchTerm.trim().length === 0) {
+        return new Response(JSON.stringify({ success: false, error: 'searchTerm must be a non-empty string' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (rawSearchTerm.length > 200) {
+        return new Response(JSON.stringify({ success: false, error: 'searchTerm must be 200 characters or less' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      searchTerm = rawSearchTerm.trim()
     }
 
     const db = getDb()
@@ -297,18 +338,17 @@ export const POST: APIRoute = async ({ request }) => {
 
     // If dry run, fetch and return preview synchronously
     if (dryRun) {
-      const emails = await fetchTicketEmails(
-        {
-          host: cred.host,
-          port: cred.port,
-          email: cred.imapEmail,
-          encryptedPassword: cred.encryptedPassword,
-          iv: cred.iv,
-          lastSyncAt: cred.lastSyncAt,
-        },
-        encryptionKey,
-        { lookbackDays },
-      )
+      const dryRunCredentials = {
+        host: cred.host,
+        port: cred.port,
+        email: cred.imapEmail,
+        encryptedPassword: cred.encryptedPassword,
+        iv: cred.iv,
+        lastSyncAt: cred.lastSyncAt,
+      }
+      const emails = searchTerm
+        ? await searchEmailsByQuery(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate, searchTerm })
+        : await fetchTicketEmails(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate })
 
       const emailsForIngest: EmailForIngest[] = emails.map((email) => ({
         messageId: email.messageId,
@@ -330,7 +370,8 @@ export const POST: APIRoute = async ({ request }) => {
 
     // For real sync: create session and process asynchronously
     cleanupSessions()
-    const sessionId = createSession(user.id, cred.id, APPROVED_SENDERS.length)
+    const sendersTotal = searchTerm ? 1 : APPROVED_SENDERS.length
+    const sessionId = createSession(user.id, cred.id, sendersTotal)
 
     // Start async processing (don't await)
     processSync(
@@ -341,6 +382,9 @@ export const POST: APIRoute = async ({ request }) => {
       mainAppUrl,
       ingestApiKey,
       waitForSelection,
+      searchTerm,
+      sinceDate,
+      beforeDate,
     ).catch((err) => {
       console.error(`[sync:${sessionId}] Async sync error:`, err)
         updateSession(sessionId, {

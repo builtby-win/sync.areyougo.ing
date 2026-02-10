@@ -7,6 +7,7 @@ import { ImapFlow } from 'imapflow'
 import { convert } from 'html-to-text'
 import { simpleParser } from 'mailparser'
 import { APPROVED_SENDERS, isApprovedSender } from './approved-senders'
+import { TICKET_KEYWORDS } from './email-filter'
 import { decryptPassword } from './encryption'
 
 interface ImapCredentials {
@@ -21,6 +22,10 @@ interface ImapCredentials {
 interface FetchOptions {
   /** Override the since date (for manual sync with custom lookback) */
   lookbackDays?: number
+  /** Explicit start date (overrides lookbackDays) */
+  sinceDate?: string
+  /** Explicit end date (defaults to now) */
+  beforeDate?: string
 }
 
 /**
@@ -219,9 +224,12 @@ export async function fetchTicketEmails(
     const lock = await client.getMailboxLock('INBOX')
 
     try {
-      // Calculate since date
+      // Calculate date range
       let sinceDate: Date
-      if (options?.lookbackDays) {
+      if (options?.sinceDate) {
+        sinceDate = new Date(options.sinceDate)
+        console.log(`[imap-client] Using explicit sinceDate: ${sinceDate.toISOString()}`)
+      } else if (options?.lookbackDays) {
         sinceDate = new Date(Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000)
         console.log(`[imap-client] Using lookback of ${options.lookbackDays} days`)
       } else if (credentials.lastSyncAt) {
@@ -230,6 +238,11 @@ export async function fetchTicketEmails(
       } else {
         sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // Default: last 30 days
         console.log('[imap-client] Using default 30 day lookback')
+      }
+
+      const beforeDate = options?.beforeDate ? new Date(options.beforeDate) : undefined
+      if (beforeDate) {
+        console.log(`[imap-client] Using explicit beforeDate: ${beforeDate.toISOString()}`)
       }
 
       // Search for emails from each approved sender
@@ -246,6 +259,7 @@ export async function fetchTicketEmails(
           const results = await client.search({
             from: sender,
             since: sinceDate,
+            ...(beforeDate && { before: beforeDate }),
           })
 
           // Debug logging to understand what iCloud returns
@@ -362,6 +376,166 @@ export async function fetchTicketEmails(
     await client.logout()
   } catch (error) {
     console.error('[imap-client] Error fetching ticket emails:', error)
+    progress?.onConnectionError?.(error instanceof Error ? error : new Error(String(error)))
+    throw error
+  }
+
+  return emails
+}
+
+/**
+ * Search emails by a user-provided query term (subject OR from) and filter by ticket keywords.
+ * Used for manual "power search" mode where users can find ticket emails from any sender.
+ */
+export async function searchEmailsByQuery(
+  credentials: ImapCredentials,
+  encryptionKey: string,
+  options: { lookbackDays?: number; sinceDate?: string; beforeDate?: string; searchTerm: string },
+  progress?: FetchProgressCallback,
+  plaintextPassword?: string,
+): Promise<Email[]> {
+  const { searchTerm } = options
+  console.log(
+    `[imap-client] Searching emails by query "${searchTerm}" from ${credentials.host}:${credentials.port}...`,
+  )
+
+  const password =
+    plaintextPassword ||
+    (await decryptPassword(credentials.encryptedPassword, credentials.iv, encryptionKey))
+
+  const client = createClient(credentials.host, credentials.port, credentials.email, password)
+
+  const emails: Email[] = []
+
+  try {
+    progress?.onConnecting?.()
+    progress?.onAuthenticating?.()
+    await client.connect()
+    progress?.onConnected?.()
+
+    const lock = await client.getMailboxLock('INBOX')
+
+    try {
+      // Calculate date range
+      let sinceDate: Date
+      if (options.sinceDate) {
+        sinceDate = new Date(options.sinceDate)
+      } else if (options.lookbackDays) {
+        sinceDate = new Date(Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000)
+      } else {
+        sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+      }
+      const beforeDate = options.beforeDate ? new Date(options.beforeDate) : undefined
+
+      progress?.onSenderStart(searchTerm)
+
+      try {
+        const results = await client.search({
+          or: [{ subject: searchTerm }, { from: searchTerm }],
+          since: sinceDate,
+          ...(beforeDate && { before: beforeDate }),
+        })
+
+        if (!results) {
+          console.log(`[imap-client] No results for query "${searchTerm}" (returned ${results})`)
+          progress?.onSenderComplete(searchTerm, [])
+          return emails
+        }
+
+        let resultArray: number[]
+        if (Array.isArray(results)) {
+          resultArray = results
+        } else if ((results as any) instanceof Set) {
+          resultArray = Array.from(results as unknown as Set<number>)
+        } else {
+          console.warn(
+            `[imap-client] Unexpected search result type for query "${searchTerm}":`,
+            typeof results,
+            results,
+          )
+          progress?.onSenderComplete(searchTerm, [])
+          return emails
+        }
+
+        if (resultArray.length === 0) {
+          progress?.onSenderComplete(searchTerm, [])
+          return emails
+        }
+
+        console.log(`[imap-client] Found ${resultArray.length} emails matching "${searchTerm}"`)
+
+        // Limit to 50 results
+        const uidsToFetch = resultArray.slice(0, 50)
+
+        for await (const msg of client.fetch(uidsToFetch, {
+          envelope: true,
+          source: true,
+        })) {
+          if (!msg.envelope) continue
+          const from = msg.envelope.from?.[0]
+          const fromAddress = from?.address || ''
+          const fromName = from?.name || ''
+
+          let body = ''
+          if (msg.source) {
+            const parsed = await simpleParser(msg.source)
+            const text = parsed.text || ''
+            const html = parsed.html || ''
+
+            if (text.length < 100 && html.length > 0) {
+              body = convert(html, {
+                wordwrap: 130,
+                selectors: [
+                  { selector: 'a', options: { hideLinkHrefIfSameAsText: true } },
+                  { selector: 'img', format: 'skip' },
+                ],
+              })
+            } else {
+              body = text
+            }
+          }
+
+          const rawDate = msg.envelope.date || new Date(0)
+          const stableDate = new Date(Math.floor(rawDate.getTime() / 1000) * 1000)
+
+          emails.push({
+            messageId: msg.envelope.messageId || `${msg.uid}@unknown`,
+            from: fromName ? `${fromName} <${fromAddress}>` : fromAddress,
+            subject: msg.envelope.subject || '(no subject)',
+            date: stableDate,
+            body: body.trim(),
+          })
+        }
+
+        // Client-side filter: keep only emails with a ticket keyword in the subject
+        const filtered = emails.filter((e) => {
+          const lowerSubject = e.subject.toLowerCase()
+          return TICKET_KEYWORDS.some((kw) => lowerSubject.includes(kw))
+        })
+
+        // Replace emails array contents with filtered results
+        emails.length = 0
+        emails.push(...filtered)
+
+        console.log(
+          `[imap-client] After ticket keyword filter: ${filtered.length} emails remain`,
+        )
+
+        progress?.onSenderComplete(searchTerm, filtered)
+      } catch (searchError) {
+        console.error(`[imap-client] Error searching for query "${searchTerm}":`, searchError)
+        progress?.onError(
+          searchTerm,
+          searchError instanceof Error ? searchError : new Error(String(searchError)),
+        )
+      }
+    } finally {
+      lock.release()
+    }
+
+    await client.logout()
+  } catch (error) {
+    console.error('[imap-client] Error in searchEmailsByQuery:', error)
     progress?.onConnectionError?.(error instanceof Error ? error : new Error(String(error)))
     throw error
   }
