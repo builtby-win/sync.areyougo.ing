@@ -15,10 +15,35 @@ interface IngestOptions {
   ingestApiKey?: string
 }
 
+interface IngestEmailInput {
+  messageId: string
+  from: string
+  subject: string
+  body: string
+  date: string | Date
+}
+
+interface BuildIngestPayloadInput {
+  userId: string
+  recipientEmail: string
+  email: IngestEmailInput
+}
+
 // Extract email address from "Name <email@domain.com>" format
 function extractEmailAddress(from: string): string {
   const match = from.match(/<([^>]+)>/)
   return match ? match[1] : from.trim()
+}
+
+export function buildIngestPayload({ userId, recipientEmail, email }: BuildIngestPayloadInput) {
+  return {
+    userId,
+    recipientEmail,
+    senderEmail: extractEmailAddress(email.from),
+    subject: email.subject,
+    body: redactPii(email.body),
+    emailDate: email.date instanceof Date ? email.date.toISOString() : email.date,
+  }
 }
 
 /**
@@ -51,14 +76,11 @@ export async function runIngestion({ sessionId, cred, mainAppUrl, ingestApiKey }
     updateEmailStatus(sessionId, email.messageId, 'sending')
 
     try {
-      const payload = {
-        recipientEmail: cred.imapEmail,
-        senderEmail: extractEmailAddress(email.from),
-        subject: email.subject,
-        body: redactPii(email.body),
-        emailDate: email.date,
+      const payload = buildIngestPayload({
         userId: cred.userId,
-      }
+        recipientEmail: cred.imapEmail,
+        email,
+      })
 
       const response = await fetch(`${mainAppUrl}/api/ingest`, {
         method: 'POST',

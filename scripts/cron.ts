@@ -8,6 +8,7 @@ import cron from 'node-cron'
 import { checkAlreadyIngested, computeEmailHash } from '../src/lib/dedup'
 import { getDb } from '../src/lib/db'
 import { shouldProcessEmail } from '../src/lib/email-filter'
+import { buildIngestPayload } from '../src/lib/ingest'
 import { fetchTicketEmails } from '../src/lib/imap-client'
 import { imapCredentials, syncHistory } from '../src/lib/schema'
 
@@ -100,23 +101,19 @@ async function runSync(): Promise<void> {
         }
 
         try {
+          const payload = buildIngestPayload({
+            userId: cred.userId,
+            recipientEmail: cred.imapEmail,
+            email,
+          })
+
           const response = await fetch(`${mainAppUrl}/api/ingest`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               ...(ingestApiKey && { 'X-API-Key': ingestApiKey }),
             },
-            body: JSON.stringify({
-              userId: cred.userId,
-              userEmail: cred.userEmail,
-              email: {
-                messageId: email.messageId,
-                from: email.from,
-                subject: email.subject,
-                date: email.date.toISOString(),
-                body: email.body,
-              },
-            }),
+            body: JSON.stringify(payload),
           })
 
           if (response.ok) {
