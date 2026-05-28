@@ -20,6 +20,7 @@ import { imapCredentials, syncHistory } from '../src/lib/schema'
 import {
   callSyncProjection,
   computeJitterMs,
+  pruneSyncHistory,
   recordAttempt,
   recordCursorAdvance,
   recordFailure,
@@ -282,6 +283,12 @@ async function runSync(): Promise<void> {
         completedAt,
       })
     }
+  }
+
+  // Prune old sync_history entries to prevent unbounded growth
+  const pruned = pruneSyncHistory(db)
+  if (pruned.deleted > 0) {
+    console.log(`[cron] Pruned ${pruned.deleted} old sync_history entries`)
   }
 
   console.log('[cron] Scheduled sync completed')

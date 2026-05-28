@@ -7,13 +7,14 @@
  * Jitter: deterministic hash of credential id, 0–120s.
  */
 
-import { and, eq, isNull, lt, or } from 'drizzle-orm'
+import { and, eq, isNull, lt, or, sql } from 'drizzle-orm'
 import type { DatabaseType } from './db'
 import { imapCredentials } from './schema'
 
 export const LOCK_TTL_MS = 20 * 60 * 1000 // 20 minutes
 export const DEFAULT_MAX_JITTER_MS = 120_000 // 120 seconds (2 minutes)
 export const MAX_BACKOFF_MS = 6 * 60 * 60 * 1000 // 6 hours
+export const DEFAULT_MAX_SYNC_HISTORY_PER_CREDENTIAL = 100
 
 /**
  * Deterministic jitter computed from a credential id string.
@@ -295,6 +296,34 @@ export async function recordManualSuccess(
       updatedAt: now,
     })
     .where(eq(imapCredentials.id, credentialId))
+}
+
+/**
+ * Prune old sync_history entries, keeping at most `maxPerCredential` entries
+ * per credential. Entries with NULL credential_id are kept as-is.
+ * Uses a window-function DELETE for efficient per-credential retention.
+ *
+ * Call periodically from the cron loop to prevent unbounded growth.
+ * Returns the number of deleted rows.
+ */
+export function pruneSyncHistory(
+  db: DatabaseType,
+  maxPerCredential = DEFAULT_MAX_SYNC_HISTORY_PER_CREDENTIAL,
+): { deleted: number } {
+  const result = db.run(sql`
+    DELETE FROM sync_history 
+    WHERE id IN (
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY credential_id 
+          ORDER BY completed_at DESC
+        ) AS rn
+        FROM sync_history
+        WHERE credential_id IS NOT NULL
+      ) WHERE rn > ${maxPerCredential}
+    )
+  `)
+  return { deleted: Number(result.changes) }
 }
 
 /**

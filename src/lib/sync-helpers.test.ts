@@ -8,6 +8,7 @@ import {
   callSyncProjection,
   computeJitterMs,
   computeBackoffMs,
+  pruneSyncHistory,
   recordAttempt,
   recordCursorAdvance,
   recordFailure,
@@ -38,6 +39,17 @@ const testSchema = {
     lockExpiresAt: integer('lock_expires_at', { mode: 'timestamp' }),
     updatedAt: integer('updated_at', { mode: 'timestamp' }),
   }),
+  syncHistory: sqliteTable('sync_history', {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    credentialId: text('credential_id'),
+    status: text('status').notNull(),
+    emailsFound: integer('emails_found').default(0),
+    emailsIngested: integer('emails_ingested').default(0),
+    errorMessage: text('error_message'),
+    startedAt: integer('started_at', { mode: 'timestamp' }).notNull(),
+    completedAt: integer('completed_at', { mode: 'timestamp' }),
+  }),
 }
 
 function createTestDb() {
@@ -58,6 +70,17 @@ function createTestDb() {
       lock_owner TEXT,
       lock_expires_at INTEGER,
       updated_at INTEGER
+    );
+    CREATE TABLE sync_history (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      credential_id TEXT,
+      status TEXT NOT NULL,
+      emails_found INTEGER DEFAULT 0,
+      emails_ingested INTEGER DEFAULT 0,
+      error_message TEXT,
+      started_at INTEGER NOT NULL,
+      completed_at INTEGER
     )
   `)
   return drizzle(sqlite, { schema: testSchema })
@@ -634,6 +657,130 @@ describe('callSyncProjection', () => {
     })
 
     assert.strictEqual(result.success, false)
+  })
+})
+
+// ----- pruneSyncHistory tests -----
+
+function insertHistory(
+  db: TestDb,
+  overrides: Partial<{
+    id: string
+    userId: string
+    credentialId: string | null
+    status: string
+    completedAt: Date
+  }>,
+) {
+  const id = overrides.id ?? crypto.randomUUID()
+  db.insert(testSchema.syncHistory)
+    .values({
+      id,
+      userId: overrides.userId ?? 'user-1',
+      credentialId: overrides.credentialId !== undefined ? overrides.credentialId : 'cred-1',
+      status: overrides.status ?? 'success',
+      startedAt: new Date(Date.now() - 86400_000),
+      completedAt: overrides.completedAt ?? new Date(Date.now() - 3600_000),
+    })
+    .run()
+  return id
+}
+
+function countHistory(db: TestDb): number {
+  return db.select().from(testSchema.syncHistory).all().length
+}
+
+function getHistoryCredIds(db: TestDb): (string | null)[] {
+  return db
+    .select({ credentialId: testSchema.syncHistory.credentialId })
+    .from(testSchema.syncHistory)
+    .all()
+    .map((r) => r.credentialId)
+}
+
+describe('pruneSyncHistory', () => {
+  let db: TestDb
+
+  beforeEach(() => {
+    db = createTestDb()
+  })
+
+  it('keeps only the most recent entries per credential', () => {
+    const now = Date.now()
+    // Insert 5 entries for cred-1, with completedAt ascending
+    for (let i = 0; i < 5; i++) {
+      insertHistory(db, {
+        credentialId: 'cred-1',
+        completedAt: new Date(now - (5 - i) * 60_000),
+      })
+    }
+    assert.strictEqual(countHistory(db), 5)
+
+    // Prune keeping max 3 per credential
+    pruneSyncHistory(db as any, 3)
+
+    assert.strictEqual(countHistory(db), 3)
+    // The 3 kept entries should be the 3 most recent (largest completedAt)
+  })
+
+  it('prunes per-credential independently', () => {
+    const now = Date.now()
+    // 4 entries for cred-1, 2 entries for cred-2
+    for (let i = 0; i < 4; i++) {
+      insertHistory(db, {
+        credentialId: 'cred-1',
+        completedAt: new Date(now - (4 - i) * 60_000),
+      })
+    }
+    for (let i = 0; i < 2; i++) {
+      insertHistory(db, {
+        credentialId: 'cred-2',
+        completedAt: new Date(now - (2 - i) * 60_000),
+      })
+    }
+    assert.strictEqual(countHistory(db), 6)
+
+    pruneSyncHistory(db as any, 3)
+
+    // cred-1 should have 3 kept, cred-2 should have 2 kept (under limit)
+    assert.strictEqual(countHistory(db), 5)
+    const credIds = getHistoryCredIds(db)
+    const cred1Count = credIds.filter((id) => id === 'cred-1').length
+    const cred2Count = credIds.filter((id) => id === 'cred-2').length
+    assert.strictEqual(cred1Count, 3)
+    assert.strictEqual(cred2Count, 2)
+  })
+
+  it('preserves entries with NULL credential_id', () => {
+    insertHistory(db, { credentialId: null, completedAt: new Date(Date.now() - 60_000) })
+    insertHistory(db, { credentialId: null, completedAt: new Date(Date.now() - 120_000) })
+    assert.strictEqual(countHistory(db), 2)
+
+    pruneSyncHistory(db as any, 1)
+
+    // Entries with NULL credential_id should be untouched
+    assert.strictEqual(countHistory(db), 2)
+  })
+
+  it('handles empty table without error', () => {
+    assert.strictEqual(countHistory(db), 0)
+    const result = pruneSyncHistory(db as any, 5)
+    assert.strictEqual(result.deleted, 0)
+    assert.strictEqual(countHistory(db), 0)
+  })
+
+  it('returns correct deleted count', () => {
+    const now = Date.now()
+    for (let i = 0; i < 5; i++) {
+      insertHistory(db, {
+        credentialId: 'cred-1',
+        completedAt: new Date(now - (5 - i) * 60_000),
+      })
+    }
+
+    const result = pruneSyncHistory(db as any, 2)
+    assert.strictEqual(result.deleted, 3)
+    assert.strictEqual(countHistory(db), 2)
   })
 })
 
