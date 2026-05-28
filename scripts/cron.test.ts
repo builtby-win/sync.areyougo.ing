@@ -2,20 +2,32 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 test('getCronSchedule', async (t) => {
-  await t.test('returns default schedule when CRON_SCHEDULE is not set', async () => {
-    // given CRON_SCHEDULE env var is not set (testing default)
+  // Save original env so each test is fully isolated
+  const origCronSchedule = process.env.CRON_SCHEDULE
 
-    // when importing the module fresh
-    const cronModule = await import('./cron')
+  t.after(() => {
+    if (origCronSchedule !== undefined) {
+      process.env.CRON_SCHEDULE = origCronSchedule
+    } else {
+      delete process.env.CRON_SCHEDULE
+    }
+  })
+
+  await t.test('returns default schedule when CRON_SCHEDULE is not set', async () => {
+    // given CRON_SCHEDULE is explicitly unset
+    delete process.env.CRON_SCHEDULE
+
+    // when importing with a cache-busted path
+    const url = new URL('./cron.ts', import.meta.url)
+    url.searchParams.set('v', String(Date.now()))
+    const cronModule = await import(url.href)
 
     // then getCronSchedule returns the default value
-    const schedule = cronModule.getCronSchedule()
-    assert.strictEqual(schedule, '*/15 * * * *')
+    assert.strictEqual(cronModule.getCronSchedule(), '*/15 * * * *')
   })
 
   await t.test('reads CRON_SCHEDULE env var when set', async () => {
     // given CRON_SCHEDULE env var is overridden
-    const prevValue = process.env.CRON_SCHEDULE
     process.env.CRON_SCHEDULE = '0 */2 * * *'
 
     // when importing with a cache-busted path
@@ -25,12 +37,5 @@ test('getCronSchedule', async (t) => {
 
     // then getCronSchedule returns the env var value
     assert.strictEqual(cronModule.getCronSchedule(), '0 */2 * * *')
-
-    // cleanup env
-    if (prevValue !== undefined) {
-      process.env.CRON_SCHEDULE = prevValue
-    } else {
-      delete process.env.CRON_SCHEDULE
-    }
   })
 })
