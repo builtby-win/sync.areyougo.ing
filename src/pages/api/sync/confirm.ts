@@ -5,6 +5,7 @@ import { runIngestion } from '../../../lib/ingest'
 import { imapCredentials } from '../../../lib/schema'
 import { getSession, updateEmailStatus, updateSession } from '../../../lib/sync-sessions'
 import { verifySession } from '../../../lib/verify-session'
+import { tryAcquireLock } from '../../../lib/sync-helpers'
 
 interface ConfirmRequest {
   sessionId: string
@@ -95,12 +96,26 @@ export const POST: APIRoute = async ({ request }) => {
 
     console.log(`[sync:${sessionId}] Confirmed selection. ${selectedMessageIds.length} selected, ${skippedCount} skipped.`)
 
+    // Acquire lock before ingestion to prevent concurrent cron sync
+    // from running on the same credential during ingestion.
+    const confirmLockOwner = `manual-${crypto.randomUUID().slice(0, 8)}`
+    const acquired = await tryAcquireLock(db, cred.id, confirmLockOwner)
+    if (!acquired) {
+      return new Response(JSON.stringify({
+        error: 'Another sync is currently running for this credential. Please try again.',
+      }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
     // Resume ingestion asynchronously
     runIngestion({
       sessionId,
       cred: { id: cred.id, userId: cred.userId, imapEmail: cred.imapEmail },
       mainAppUrl,
       ingestApiKey,
+      lockOwner: confirmLockOwner,
     }).catch((err: unknown) => {
         console.error(`[sync:${sessionId}] Async ingestion error:`, err)
     })

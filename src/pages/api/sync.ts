@@ -20,6 +20,7 @@ import {
 } from '../../lib/sync-sessions'
 import { verifySession } from '../../lib/verify-session'
 import { checkAlreadyIngested, computeEmailHash } from '../../lib/dedup'
+import { releaseLock, tryAcquireLock } from '../../lib/sync-helpers'
 
 interface SyncRequest {
   credentialId: string
@@ -78,6 +79,7 @@ async function processSync(
   lookbackDays: number,
   mainAppUrl: string,
   ingestApiKey: string | undefined,
+  lockOwner: string,
   waitForSelection = false,
   searchTerm?: string,
   sinceDate?: string,
@@ -204,6 +206,10 @@ async function processSync(
     }
 
     if (waitForSelection) {
+      // Release the lock before waiting for user selection — the lock protects
+      // IMAP operations, not user thinking time. confirm.ts will acquire a new
+      // lock before the ingestion phase.
+      await releaseLock(db, cred.id, lockOwner)
       updateSession(sessionId, { status: 'waiting_for_selection' })
       console.log(`[sync:${sessionId}] Waiting for user selection`)
       return
@@ -215,9 +221,14 @@ async function processSync(
       cred: { id: cred.id, userId: cred.userId, imapEmail: cred.imapEmail },
       mainAppUrl,
       ingestApiKey,
+      lockOwner,
     })
   } catch (error) {
     console.error(`[sync:${sessionId}] Error:`, error)
+
+    // Release lock on catastrophic failure — manual sync should not set backoff
+    await releaseLock(db, cred.id, lockOwner).catch(() => {})
+
     updateSession(sessionId, {
       status: 'failed',
       error: error instanceof Error ? error.message : 'Sync failed',
@@ -369,7 +380,23 @@ export const POST: APIRoute = async ({ request }) => {
       )
     }
 
-    // For real sync: create session and process asynchronously
+    // For real sync: acquire per-credential lock, then create session
+    // and process asynchronously. The lock prevents concurrent manual and
+    // auto sync on the same credential.
+    const manualLockOwner = `manual-${crypto.randomUUID().slice(0, 8)}`
+
+    const acquired = await tryAcquireLock(db, credentialId, manualLockOwner)
+    if (!acquired) {
+      console.log(`[sync] Lock held for credential ${credentialId}, returning 409`)
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Another sync is currently running for this credential. Please try again later.',
+        } satisfies SyncResponse),
+        { status: 409, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+
     cleanupSessions()
     const sendersTotal = searchTerm ? 1 : APPROVED_SENDERS.length
     const sessionId = createSession(user.id, cred.id, sendersTotal)
@@ -382,6 +409,7 @@ export const POST: APIRoute = async ({ request }) => {
       lookbackDays,
       mainAppUrl,
       ingestApiKey,
+      manualLockOwner,
       waitForSelection,
       searchTerm,
       sinceDate,

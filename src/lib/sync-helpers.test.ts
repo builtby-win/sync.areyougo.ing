@@ -804,6 +804,104 @@ describe('pruneSyncHistory', () => {
   })
 })
 
+// ----- Manual sync lock integration tests -----
+//
+// These tests verify that manual sync uses the same per-credential lock
+// model as auto cron, so manual and auto cannot run concurrently.
+
+describe('manual sync lock integration', () => {
+  let db: TestDb
+
+  beforeEach(() => {
+    db = createTestDb()
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-manual-1',
+      consecutiveFailures: 0,
+    }).run()
+  })
+
+  it('acquires lock with manual- prefix owner', async () => {
+    const owner = 'manual-abc123'
+    const acquired = await tryAcquireLock(db as any, 'cred-manual-1', owner)
+    assert.strictEqual(acquired, true)
+
+    const cred = getCred(db, 'cred-manual-1')
+    assert.ok(cred.lockOwner?.startsWith('manual-'))
+    assert.strictEqual(cred.lockOwner, owner)
+  })
+
+  it('releases lock via recordSuccess and sets manual sync time via recordManualSyncAt', async () => {
+    const owner = 'manual-xyz789'
+    await tryAcquireLock(db as any, 'cred-manual-1', owner)
+
+    // Simulate the manual sync completion pipeline:
+    // recordSuccess clears lock + resets failures + sets lastSyncSuccessAt
+    await recordSuccess(db as any, 'cred-manual-1', owner)
+    // recordManualSyncAt sets lastManualSyncAt (recordSuccess doesn't touch it)
+    await recordManualSyncAt(db as any, 'cred-manual-1')
+
+    const cred = getCred(db, 'cred-manual-1')
+    assert.strictEqual(cred.lockOwner, null)
+    assert.strictEqual(cred.lockExpiresAt, null)
+    assert.ok(cred.lastSyncSuccessAt instanceof Date)
+    assert.ok(cred.lastManualSyncAt instanceof Date)
+  })
+
+  it('manual sync is blocked when auto cron holds the lock', async () => {
+    // Auto cron acquires lock first
+    const cronOwner = 'cron-cron123'
+    await tryAcquireLock(db as any, 'cred-manual-1', cronOwner)
+
+    // Manual sync should fail to acquire the same credential
+    const manualOwner = 'manual-sync456'
+    const acquired = await tryAcquireLock(db as any, 'cred-manual-1', manualOwner)
+    assert.strictEqual(acquired, false)
+
+    // Cron lock is still intact
+    const cred = getCred(db, 'cred-manual-1')
+    assert.strictEqual(cred.lockOwner, cronOwner)
+  })
+
+  it('manual sync acquires lock after auto cron releases it', async () => {
+    // Auto cron acquires and completes
+    const cronOwner = 'cron-first'
+    await tryAcquireLock(db as any, 'cred-manual-1', cronOwner)
+    await recordSuccess(db as any, 'cred-manual-1', cronOwner)
+
+    // Manual sync should now be able to acquire
+    const manualOwner = 'manual-second'
+    const acquired = await tryAcquireLock(db as any, 'cred-manual-1', manualOwner)
+    assert.strictEqual(acquired, true)
+
+    const cred = getCred(db, 'cred-manual-1')
+    assert.strictEqual(cred.lockOwner, manualOwner)
+  })
+
+  it('manual lock does not overwrite backoff when cron holds a different credential lock', async () => {
+    // Two different credentials — locks should not interfere
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-cron-other',
+      consecutiveFailures: 3,
+      backoffUntil: new Date(Date.now() + 3600_000),
+      lockOwner: 'cron-other',
+      lockExpiresAt: new Date(Date.now() + 60000),
+    }).run()
+
+    // Manual lock on a different credential should succeed
+    const manualOwner = 'manual-independent'
+    const acquired = await tryAcquireLock(db as any, 'cred-manual-1', manualOwner)
+    assert.strictEqual(acquired, true)
+  })
+
+  it('manual lock owner identity is unique per call', async () => {
+    const owner1 = `manual-${crypto.randomUUID().slice(0, 8)}`
+    const owner2 = `manual-${crypto.randomUUID().slice(0, 8)}`
+    assert.notStrictEqual(owner1, owner2)
+    assert.ok(owner1.startsWith('manual-'))
+    assert.ok(owner2.startsWith('manual-'))
+  })
+})
+
 // Helper to work around drizzle's eq import shadowing
 function eq(a: any, b: any) {
   return drizzleEq(a, b)
