@@ -348,36 +348,53 @@ export const POST: APIRoute = async ({ request }) => {
       `[sync] Fetching emails with ${lookbackDays} day lookback, dryRun=${dryRun}, credentialId=${credentialId}`,
     )
 
-    // If dry run, fetch and return preview synchronously
+    // If dry run, acquire lock, fetch preview, release lock, return
     if (dryRun) {
-      const dryRunCredentials = {
-        host: cred.host,
-        port: cred.port,
-        email: cred.imapEmail,
-        encryptedPassword: cred.encryptedPassword,
-        iv: cred.iv,
-        lastSyncAt: cred.syncCursorAt ?? cred.lastSyncAt,
+      const dryRunLockOwner = `manual-${crypto.randomUUID().slice(0, 8)}`
+      const acquired = await tryAcquireLock(db, credentialId, dryRunLockOwner)
+      if (!acquired) {
+        console.log(`[sync] Lock held for credential ${credentialId}, dry-run rejected`)
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'Another sync is currently running for this credential. Please try again later.',
+          } satisfies SyncResponse),
+          { status: 409, headers: { 'Content-Type': 'application/json' } },
+        )
       }
-      const emails = searchTerm
-        ? await searchEmailsByQuery(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate, searchTerm })
-        : await fetchTicketEmails(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate })
 
-      const emailsForIngest: EmailForIngest[] = emails.map((email) => ({
-        messageId: email.messageId,
-        from: email.from,
-        subject: email.subject,
-        date: email.date.toISOString(),
-        body: email.body,
-      }))
+      try {
+        const dryRunCredentials = {
+          host: cred.host,
+          port: cred.port,
+          email: cred.imapEmail,
+          encryptedPassword: cred.encryptedPassword,
+          iv: cred.iv,
+          lastSyncAt: cred.syncCursorAt ?? cred.lastSyncAt,
+        }
+        const emails = searchTerm
+          ? await searchEmailsByQuery(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate, searchTerm })
+          : await fetchTicketEmails(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate })
 
-      return new Response(
-        JSON.stringify({
-          success: true,
-          emails: emailsForIngest,
-          emailsFound: emails.length,
-        } satisfies SyncResponse),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      )
+        const emailsForIngest: EmailForIngest[] = emails.map((email) => ({
+          messageId: email.messageId,
+          from: email.from,
+          subject: email.subject,
+          date: email.date.toISOString(),
+          body: email.body,
+        }))
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            emails: emailsForIngest,
+            emailsFound: emails.length,
+          } satisfies SyncResponse),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      } finally {
+        await releaseLock(db, credentialId, dryRunLockOwner).catch(() => {})
+      }
     }
 
     // For real sync: acquire per-credential lock, then create session

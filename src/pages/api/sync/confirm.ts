@@ -83,7 +83,20 @@ export const POST: APIRoute = async ({ request }) => {
     }
     const cred = creds[0]
 
-    // Mark unselected emails as skipped
+    // Acquire lock before mutating session state so a 409 leaves the
+    // session emails unchanged (no partial skip mutation).
+    const confirmLockOwner = `manual-${crypto.randomUUID().slice(0, 8)}`
+    const acquired = await tryAcquireLock(db, cred.id, confirmLockOwner)
+    if (!acquired) {
+      return new Response(JSON.stringify({
+        error: 'Another sync is currently running for this credential. Please try again.',
+      }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    // Mark unselected emails as skipped (lock is held — safe to mutate)
     const selectedSet = new Set(selectedMessageIds)
     let skippedCount = 0
     
@@ -95,19 +108,6 @@ export const POST: APIRoute = async ({ request }) => {
     })
 
     console.log(`[sync:${sessionId}] Confirmed selection. ${selectedMessageIds.length} selected, ${skippedCount} skipped.`)
-
-    // Acquire lock before ingestion to prevent concurrent cron sync
-    // from running on the same credential during ingestion.
-    const confirmLockOwner = `manual-${crypto.randomUUID().slice(0, 8)}`
-    const acquired = await tryAcquireLock(db, cred.id, confirmLockOwner)
-    if (!acquired) {
-      return new Response(JSON.stringify({
-        error: 'Another sync is currently running for this credential. Please try again.',
-      }), {
-        status: 409,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    }
 
     // Resume ingestion asynchronously
     runIngestion({

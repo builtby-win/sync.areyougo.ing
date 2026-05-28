@@ -902,6 +902,60 @@ describe('manual sync lock integration', () => {
   })
 })
 
+// ----- Manual sync dry-run lock tests -----
+//
+// These tests verify that a dry-run (preview) acquires the same per-credential
+// lock and releases it without mutating any sync state timestamps.
+
+describe('manual sync dry-run lock', () => {
+  let db: TestDb
+
+  beforeEach(() => {
+    db = createTestDb()
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-dryrun-1',
+      consecutiveFailures: 0,
+    }).run()
+  })
+
+  it('acquires and releases lock for dry-run without mutating sync state', async () => {
+    const owner = 'manual-dryrun-test'
+
+    // Acquire lock (simulating dry-run entry)
+    const acquired = await tryAcquireLock(db as any, 'cred-dryrun-1', owner)
+    assert.strictEqual(acquired, true)
+
+    // Verify lock is held
+    let cred = getCred(db, 'cred-dryrun-1')
+    assert.strictEqual(cred.lockOwner, owner)
+
+    // Release lock (after dry-run fetch completes, in finally)
+    await releaseLock(db as any, 'cred-dryrun-1', owner)
+
+    // Verify lock released
+    cred = getCred(db, 'cred-dryrun-1')
+    assert.strictEqual(cred.lockOwner, null)
+    assert.strictEqual(cred.lockExpiresAt, null)
+
+    // Verify NO sync state was mutated (dry-run is read-only)
+    assert.strictEqual(cred.lastSyncAttemptAt, null)
+    assert.strictEqual(cred.lastSyncSuccessAt, null)
+    assert.strictEqual(cred.lastSyncFailureAt, null)
+    assert.strictEqual(cred.lastManualSyncAt, null)
+    assert.strictEqual(cred.backoffUntil, null)
+    assert.strictEqual(cred.syncCursorAt, null)
+  })
+
+  it('dry-run is blocked when auto cron holds the lock', async () => {
+    // Cron acquires first
+    await tryAcquireLock(db as any, 'cred-dryrun-1', 'cron-owner')
+
+    // Dry-run should fail to acquire
+    const acquired = await tryAcquireLock(db as any, 'cred-dryrun-1', 'manual-dryrun')
+    assert.strictEqual(acquired, false)
+  })
+})
+
 // Helper to work around drizzle's eq import shadowing
 function eq(a: any, b: any) {
   return drizzleEq(a, b)
