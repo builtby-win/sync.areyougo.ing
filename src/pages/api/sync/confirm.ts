@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm'
 import { getDb } from '../../../lib/db'
 import { runIngestion } from '../../../lib/ingest'
 import { imapCredentials } from '../../../lib/schema'
-import { getSession, updateEmailStatus, updateSession } from '../../../lib/sync-sessions'
+import { getSession } from '../../../lib/sync-sessions'
 import { verifySession } from '../../../lib/verify-session'
 import { tryAcquireLock } from '../../../lib/sync-helpers'
 
@@ -101,10 +101,10 @@ export const POST: APIRoute = async ({ request }) => {
     let skippedCount = 0
     
     session.emails.forEach((email) => {
-        if (!selectedSet.has(email.messageId)) {
-            email.ingestStatus = 'skipped'
-            skippedCount++
-        }
+      if (!selectedSet.has(email.messageId)) {
+        email.ingestStatus = 'skipped'
+        skippedCount++
+      }
     })
 
     console.log(`[sync:${sessionId}] Confirmed selection. ${selectedMessageIds.length} selected, ${skippedCount} skipped.`)
@@ -117,7 +117,7 @@ export const POST: APIRoute = async ({ request }) => {
       ingestApiKey,
       lockOwner: confirmLockOwner,
     }).catch((err: unknown) => {
-        console.error(`[sync:${sessionId}] Async ingestion error:`, err)
+      console.error(`[sync:${sessionId}] Async ingestion error:`, err)
     })
 
     return new Response(JSON.stringify({ success: true, message: 'Ingestion started' }), {

@@ -6,7 +6,7 @@ import { shouldProcessEmail } from '../../lib/email-filter'
 import { fetchTicketEmails, searchEmailsByQuery } from '../../lib/imap-client'
 import { runIngestion } from '../../lib/ingest'
 import { redactPii } from '../../lib/redaction/redactor'
-import { imapCredentials, syncHistory } from '../../lib/schema'
+import { imapCredentials } from '../../lib/schema'
 import {
   addEmailToSession,
   cleanupSessions,
@@ -63,18 +63,18 @@ function extractEmailAddress(from: string): string {
 // Async function to process sync in background
 async function processSync(
   sessionId: string,
-    cred: {
-      id: string
-      userId: string
-      userEmail: string
-      host: string
-      port: number
-      imapEmail: string
-      encryptedPassword: string
-      iv: string
-      lastSyncAt: Date | null
-      syncCursorAt: Date | null
-    },
+  cred: {
+    id: string
+    userId: string
+    userEmail: string
+    host: string
+    port: number
+    imapEmail: string
+    encryptedPassword: string
+    iv: string
+    lastSyncAt: Date | null
+    syncCursorAt: Date | null
+  },
   encryptionKey: string,
   lookbackDays: number,
   mainAppUrl: string,
@@ -433,13 +433,12 @@ export const POST: APIRoute = async ({ request }) => {
       beforeDate,
     ).catch((err) => {
       console.error(`[sync:${sessionId}] Async sync error:`, err)
-        updateSession(sessionId, {
-          status: 'failed',
-          error: err instanceof Error ? err.message : 'Sync failed',
-          completedAt: new Date(),
-        })
-      },
-    )
+      updateSession(sessionId, {
+        status: 'failed',
+        error: err instanceof Error ? err.message : 'Sync failed',
+        completedAt: new Date(),
+      })
+    })
 
     // Return immediately with sessionId for polling
     return new Response(
