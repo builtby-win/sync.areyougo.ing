@@ -53,7 +53,11 @@ The footer on the setup page also shows the running commit with a link to view i
 
 2. **Storage**: IMAP credentials stored in a separate Cloudflare D1 database, encrypted at rest.
 
-3. **Sync**: A cron job runs every 15 minutes, fetching new ticket emails and POSTing them to areyougo.ing's ingest endpoint.
+3. **Sync**: An automatic cron job polls your IMAP inbox every 15 minutes (default), fetching new ticket emails and POSTing them to areyougo.ing's ingest endpoint. The interval is configurable via the `CRON_SCHEDULE` environment variable (standard cron syntax, e.g. `*/15 * * * *` for 15 minutes or `0 * * * *` for hourly).
+
+   **Sync status**: The API separates when a sync check ran from what emails were found. `lastCheckedAt` reports when the last sync check completed (regardless of outcome). `lastImportedEmailAt` / `lastImportedEmailDate` report the newest imported email, which may be older or absent if no new emails were found since the last check.
+
+   **Safe polling**: Do not set polling below 5 minutes. 15 minutes is the supported default for IMAP provider safety. Each failed attempt triggers exponential backoff to avoid provider rate limits. Monitor for auth failures and throttle responses in sync state.
 
 4. **Transparency**: Every page shows the deployed commit. The `/api/version` endpoint returns deployment metadata.
 
