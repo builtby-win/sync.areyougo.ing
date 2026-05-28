@@ -1,6 +1,12 @@
 /**
  * Cron job handler for automated email syncing.
- * Runs daily at 6am UTC to fetch emails for users with auto-sync enabled.
+ * Runs every 15 minutes by default to fetch emails for users with auto-sync enabled.
+ *
+ * Per-credential safety:
+ *   - Skip if credential is in backoff (backoffUntil > now)
+ *   - Acquire lock atomically before work (single conditional UPDATE)
+ *   - Release lock on success or failure
+ *   - Deterministic jitter before IMAP connection to spread load
  */
 
 import { eq } from 'drizzle-orm'
@@ -11,8 +17,22 @@ import { shouldProcessEmail } from '../src/lib/email-filter'
 import { buildIngestPayload } from '../src/lib/ingest'
 import { fetchTicketEmails } from '../src/lib/imap-client'
 import { imapCredentials, syncHistory } from '../src/lib/schema'
+import {
+  computeJitterMs,
+  tryAcquireLock,
+  recordAttempt,
+  recordSuccess,
+  recordFailure,
+} from '../src/lib/sync-helpers'
 
-const CRON_SCHEDULE = process.env.CRON_SCHEDULE || '0 6 * * *' // Daily at 6am UTC
+const CRON_SCHEDULE = process.env.CRON_SCHEDULE || '*/15 * * * *' // Every 15 minutes
+
+export function getCronSchedule(): string {
+  return CRON_SCHEDULE
+}
+
+// Unique identity for this process instance (used for lock ownership)
+const LOCK_OWNER = `cron-${crypto.randomUUID().slice(0, 8)}`
 
 function extractEmailAddress(from: string): string {
   const match = from.match(/<([^>]+)>/)
@@ -21,6 +41,7 @@ function extractEmailAddress(from: string): string {
 
 async function runSync(): Promise<void> {
   console.log('[cron] Scheduled sync started at:', new Date().toISOString())
+  console.log(`[cron] Lock owner identity: ${LOCK_OWNER}`)
 
   const encryptionKey = process.env.ENCRYPTION_KEY
   const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
@@ -42,10 +63,35 @@ async function runSync(): Promise<void> {
   console.log(`[cron] Found ${credentials.length} accounts to sync`)
 
   for (const cred of credentials) {
+    // --- Step 1: Check backoff ---
+    if (cred.backoffUntil && cred.backoffUntil > new Date()) {
+      console.log(
+        `[cron] Skipping ${cred.imapEmail} — in backoff until ${cred.backoffUntil.toISOString()}`,
+      )
+      continue
+    }
+
+    // --- Step 2: Acquire per-credential lock ---
+    const acquired = await tryAcquireLock(db, cred.id, LOCK_OWNER)
+    if (!acquired) {
+      console.log(`[cron] Skipping ${cred.imapEmail} — lock held by another instance`)
+      continue
+    }
+
+    await recordAttempt(db, cred.id, LOCK_OWNER)
+
     const startedAt = new Date()
     const historyId = crypto.randomUUID()
+    let ingestedCount = 0
 
     try {
+      // --- Step 3: Deterministic jitter before IMAP connection ---
+      const jitterMs = computeJitterMs(cred.id)
+      if (jitterMs > 0) {
+        console.log(`[cron] Jittering ${cred.imapEmail} for ${jitterMs}ms`)
+        await new Promise((resolve) => setTimeout(resolve, jitterMs))
+      }
+
       console.log(`[cron] Syncing account: ${cred.imapEmail} (user: ${cred.userId})`)
 
       // Fetch emails from approved senders
@@ -81,10 +127,10 @@ async function runSync(): Promise<void> {
       )
 
       if (existingHashes.size > 0) {
-        console.log(`[cron] Dedup: ${existingHashes.size} emails already imported for ${cred.imapEmail}`)
+        console.log(
+          `[cron] Dedup: ${existingHashes.size} emails already imported for ${cred.imapEmail}`,
+        )
       }
-
-      let ingestedCount = 0
 
       // POST each email to the main app's ingest endpoint
       for (const email of emailsForIngest) {
@@ -126,11 +172,8 @@ async function runSync(): Promise<void> {
         }
       }
 
-      // Update last sync time for this specific credential
-      await db
-        .update(imapCredentials)
-        .set({ lastSyncAt: new Date(), updatedAt: new Date() })
-        .where(eq(imapCredentials.id, cred.id))
+      // Record success: clear lock/backoff/error, update timestamps
+      await recordSuccess(db, cred.id, LOCK_OWNER)
 
       // Log success with credentialId
       await db.insert(syncHistory).values({
@@ -148,7 +191,11 @@ async function runSync(): Promise<void> {
         `[cron] Sync complete for ${cred.imapEmail}: ${ingestedCount}/${emails.length} ingested`,
       )
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       console.error(`[cron] Sync failed for ${cred.imapEmail}:`, error)
+
+      // Record failure: set backoff, failure state, release lock
+      await recordFailure(db, cred.id, LOCK_OWNER, errorMessage)
 
       // Log error with credentialId
       await db.insert(syncHistory).values({
@@ -158,7 +205,7 @@ async function runSync(): Promise<void> {
         status: 'error',
         emailsFound: 0,
         emailsIngested: 0,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorMessage,
         startedAt,
         completedAt: new Date(),
       })
