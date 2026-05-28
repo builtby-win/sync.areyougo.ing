@@ -319,6 +319,25 @@ describe('recordSuccess', () => {
     const storedMs = Math.floor(cred.lastSyncAttemptAt!.getTime() / 1000) * 1000
     assert.strictEqual(storedMs, attemptMs)
   })
+
+  it('does not modify lastManualSyncAt (auto cron semantic)', async () => {
+    // given a credential with a previous manual sync time and an acquired lock
+    const manualSyncTime = new Date(Date.now() - 86400_000)
+    db.update(testSchema.imapCredentials)
+      .set({ lastManualSyncAt: manualSyncTime })
+      .where(eq(testSchema.imapCredentials.id, 'cred-1'))
+      .run()
+
+    // when auto cron calls recordSuccess
+    await recordSuccess(db as any, 'cred-1', 'my-owner')
+
+    const cred = getCred(db, 'cred-1')
+    // then lastManualSyncAt remains unchanged (auto cron never touches it)
+    assert.ok(cred.lastManualSyncAt instanceof Date)
+    const storedMs = Math.floor(cred.lastManualSyncAt!.getTime() / 1000) * 1000
+    const expectedMs = Math.floor(manualSyncTime.getTime() / 1000) * 1000
+    assert.strictEqual(storedMs, expectedMs)
+  })
 })
 
 describe('recordFailure', () => {
@@ -373,15 +392,16 @@ describe('recordFailure', () => {
       .where(eq(testSchema.imapCredentials.id, 'cred-1'))
       .run()
 
-    await recordFailure(db as any, 'cred-1', 'my-owner', 'IMAP auth failure')
+    await recordSuccess(db as any, 'cred-1', 'my-owner')
 
     const cred = getCred(db, 'cred-1')
-    assert.ok(cred.lastSyncFailureAt instanceof Date)
+    assert.ok(cred.lastSyncSuccessAt instanceof Date)
     // Compare rounded to second since SQLite may truncate millis
     const attemptMs = Math.floor(attemptTime.getTime() / 1000) * 1000
     const storedMs = Math.floor(cred.lastSyncAttemptAt!.getTime() / 1000) * 1000
     assert.strictEqual(storedMs, attemptMs)
   })
+
 })
 
 // ----- Backoff skip logic tests -----

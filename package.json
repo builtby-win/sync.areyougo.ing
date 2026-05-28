@@ -15,8 +15,8 @@
     "migrate": "tsx scripts/migrate.ts",
     "docker:build": "sh scripts/build-with-git-commit.sh",
     "typecheck": "astro check && tsc --noEmit",
-    "test": "tsx --test src/lib/sync-helpers.test.ts src/lib/ingest.test.ts",
-    "test:watch": "tsx --test --watch src/lib/sync-helpers.test.ts src/lib/ingest.test.ts",
+    "test": "tsx --test src/lib/sync-helpers.test.ts src/lib/ingest.test.ts scripts/cron.test.ts",
+    "test:watch": "tsx --test --watch src/lib/sync-helpers.test.ts src/lib/ingest.test.ts scripts/cron.test.ts",
     "format": "biome format --write .",
     "lint": "biome lint .",
     "check": "biome check --write ."
