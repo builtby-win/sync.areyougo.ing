@@ -5,9 +5,9 @@ import { imapCredentials, syncHistory } from './schema'
 import {
   callSyncProjection,
   recordCursorAdvance,
+  recordFailure,
   recordManualSyncAt,
   recordSuccess,
-  releaseLock,
 } from './sync-helpers'
 import { type SyncSession, getSession, updateEmailStatus, updateSession } from './sync-sessions'
 
@@ -207,14 +207,41 @@ export async function runIngestion({ sessionId, cred, mainAppUrl, ingestApiKey, 
       `[sync:${sessionId}] Complete: ${importedCount}/${foundCount} ingested (${skippedCount} skipped, ${failedCount} failed)`,
     )
   } catch (error) {
-    // Release lock on catastrophic failure — manual sync should not set
-    // backoff, so we use releaseLock instead of recordFailure
-    await releaseLock(db, cred.id, lockOwner).catch(() => {})
+    console.error(`[sync:${sessionId}] Ingestion error:`, error)
+    const errMsg = error instanceof Error ? error.message : 'Ingestion failed'
+
+    // Durable failure state: recordFailure sets failure state, releases
+    // lock, and computes backoff so credential can be retried next cycle.
+    await recordFailure(db, cred.id, lockOwner, errMsg).catch(() => {})
+    await db
+      .insert(syncHistory)
+      .values({
+        id: crypto.randomUUID(),
+        userId: cred.userId,
+        credentialId: cred.id,
+        status: 'error',
+        errorMessage: errMsg,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      })
+      .catch(() => {})
+    const projectionSecret = process.env.SYNC_PROJECTION_SECRET
+    await callSyncProjection(mainAppUrl, projectionSecret, {
+      userId: cred.userId,
+      status: 'failed',
+      errorMessage: errMsg,
+      metadata: {
+        mode: 'manual',
+        credentialId: cred.id,
+        recipientEmail: cred.imapEmail,
+        errorMessage: errMsg,
+      },
+    }).catch(() => {})
+
     updateSession(sessionId, {
       status: 'failed',
-      error: error instanceof Error ? error.message : 'Ingestion failed',
+      error: errMsg,
       completedAt: new Date(),
     })
-    throw error
   }
 }

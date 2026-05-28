@@ -956,6 +956,104 @@ describe('manual sync dry-run lock', () => {
   })
 })
 
+// ----- Manual sync failure state -----
+//
+// When a manual sync fails, the POST handler stamps lastSyncAttemptAt
+// (via recordAttempt) before processing, and the catch block calls
+// recordFailure + syncHistory insert. These tests verify that the
+// failure state is durably persisted and the lock is released so the
+// credential can be retried on the next cron cycle.
+
+describe('manual sync failure state', () => {
+  let db: TestDb
+
+  beforeEach(() => {
+    db = createTestDb()
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-manual-fail',
+      consecutiveFailures: 0,
+    }).run()
+  })
+
+  it('stamps lastSyncAttemptAt then sets failure state and releases lock', async () => {
+    const owner = 'manual-fail-test'
+
+    // Step 1: manual sync acquires lock
+    const acquired = await tryAcquireLock(db as any, 'cred-manual-fail', owner)
+    assert.strictEqual(acquired, true)
+
+    // Step 2: recordAttempt stamps lastSyncAttemptAt
+    await recordAttempt(db as any, 'cred-manual-fail', owner)
+
+    let cred = getCred(db, 'cred-manual-fail')
+    assert.ok(cred.lastSyncAttemptAt instanceof Date)
+    const attemptTs = cred.lastSyncAttemptAt!.getTime()
+
+    // Step 3: recordFailure sets error, backoff, and releases lock
+    await recordFailure(db as any, 'cred-manual-fail', owner, 'IMAP connection timeout')
+
+    // Verify lock released
+    cred = getCred(db, 'cred-manual-fail')
+    assert.strictEqual(cred.lockOwner, null)
+    assert.strictEqual(cred.lockExpiresAt, null)
+
+    // Verify failure state
+    assert.strictEqual(cred.lastSyncError, 'IMAP connection timeout')
+    assert.ok(cred.lastSyncFailureAt instanceof Date)
+    assert.strictEqual(cred.consecutiveFailures, 1)
+    assert.ok(cred.backoffUntil instanceof Date)
+    assert.ok(cred.backoffUntil!.getTime() > Date.now())
+
+    // lastSyncAttemptAt is preserved (not overwritten by recordFailure)
+    const storedAttemptMs = Math.floor(cred.lastSyncAttemptAt!.getTime() / 1000) * 1000
+    const expectedAttemptMs = Math.floor(attemptTs / 1000) * 1000
+    assert.strictEqual(storedAttemptMs, expectedAttemptMs)
+  })
+
+  it('writes syncHistory with error status', async () => {
+    db.insert(testSchema.syncHistory)
+      .values({
+        id: crypto.randomUUID(),
+        userId: 'user-manual-fail',
+        credentialId: 'cred-manual-fail',
+        status: 'error',
+        errorMessage: 'IMAP connection timeout',
+        startedAt: new Date(),
+        completedAt: new Date(),
+      })
+      .run()
+
+    const rows = db
+      .select()
+      .from(testSchema.syncHistory)
+      .where(eq(testSchema.syncHistory.credentialId, 'cred-manual-fail'))
+      .all()
+
+    assert.strictEqual(rows.length, 1)
+    assert.strictEqual(rows[0].status, 'error')
+    assert.strictEqual(rows[0].errorMessage, 'IMAP connection timeout')
+    assert.strictEqual(rows[0].userId, 'user-manual-fail')
+  })
+
+  it('recordAttempt after lock emit stamps attempt that survives recordFailure', async () => {
+    // Full sequence: insert → lock acquire → attempt → failure
+    const owner = 'manual-seq-owner'
+
+    await tryAcquireLock(db as any, 'cred-manual-fail', owner)
+    await recordAttempt(db as any, 'cred-manual-fail', owner)
+    await recordFailure(db as any, 'cred-manual-fail', owner, 'Auth failed')
+
+    const cred = getCred(db, 'cred-manual-fail')
+    // Both timestamps are set
+    assert.ok(cred.lastSyncAttemptAt instanceof Date)
+    assert.ok(cred.lastSyncFailureAt instanceof Date)
+    // Lock is released
+    assert.strictEqual(cred.lockOwner, null)
+    // Error message recorded
+    assert.strictEqual(cred.lastSyncError, 'Auth failed')
+  })
+})
+
 // Helper to work around drizzle's eq import shadowing
 function eq(a: any, b: any) {
   return drizzleEq(a, b)

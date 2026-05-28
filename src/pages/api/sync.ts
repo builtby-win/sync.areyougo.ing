@@ -6,7 +6,7 @@ import { shouldProcessEmail } from '../../lib/email-filter'
 import { fetchTicketEmails, searchEmailsByQuery } from '../../lib/imap-client'
 import { runIngestion } from '../../lib/ingest'
 import { redactPii } from '../../lib/redaction/redactor'
-import { imapCredentials } from '../../lib/schema'
+import { imapCredentials, syncHistory } from '../../lib/schema'
 import {
   addEmailToSession,
   cleanupSessions,
@@ -20,7 +20,13 @@ import {
 } from '../../lib/sync-sessions'
 import { verifySession } from '../../lib/verify-session'
 import { checkAlreadyIngested, computeEmailHash } from '../../lib/dedup'
-import { releaseLock, tryAcquireLock } from '../../lib/sync-helpers'
+import {
+  callSyncProjection,
+  recordAttempt,
+  recordFailure,
+  releaseLock,
+  tryAcquireLock,
+} from '../../lib/sync-helpers'
 
 interface SyncRequest {
   credentialId: string
@@ -226,15 +232,39 @@ async function processSync(
   } catch (error) {
     console.error(`[sync:${sessionId}] Error:`, error)
 
-    // Release lock on catastrophic failure — manual sync should not set backoff
-    await releaseLock(db, cred.id, lockOwner).catch(() => {})
+    // Durable failure state: set failure, syncHistory, and projection
+    const errMsg = error instanceof Error ? error.message : 'Sync failed'
+    await recordFailure(db, cred.id, lockOwner, errMsg).catch(() => {})
+    await db
+      .insert(syncHistory)
+      .values({
+        id: crypto.randomUUID(),
+        userId: cred.userId,
+        credentialId: cred.id,
+        status: 'error',
+        errorMessage: errMsg,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      })
+      .catch(() => {})
+    const projectionSecret = process.env.SYNC_PROJECTION_SECRET
+    await callSyncProjection(mainAppUrl, projectionSecret, {
+      userId: cred.userId,
+      status: 'failed',
+      errorMessage: errMsg,
+      metadata: {
+        mode: 'manual',
+        credentialId: cred.id,
+        recipientEmail: cred.imapEmail,
+        errorMessage: errMsg,
+      },
+    }).catch(() => {})
 
     updateSession(sessionId, {
       status: 'failed',
-      error: error instanceof Error ? error.message : 'Sync failed',
+      error: errMsg,
       completedAt: new Date(),
     })
-    throw error
   }
 }
 
@@ -418,6 +448,10 @@ export const POST: APIRoute = async ({ request }) => {
     const sendersTotal = searchTerm ? 1 : APPROVED_SENDERS.length
     const sessionId = createSession(user.id, cred.id, sendersTotal)
 
+    // Stamping lastSyncAttemptAt before processing ensures that even if the
+    // sync fails, the credential shows a recent attempt (vs "never checked").
+    await recordAttempt(db, credentialId, manualLockOwner)
+
     // Start async processing (don't await)
     processSync(
       sessionId,
@@ -432,12 +466,9 @@ export const POST: APIRoute = async ({ request }) => {
       sinceDate,
       beforeDate,
     ).catch((err) => {
-      console.error(`[sync:${sessionId}] Async sync error:`, err)
-      updateSession(sessionId, {
-        status: 'failed',
-        error: err instanceof Error ? err.message : 'Sync failed',
-        completedAt: new Date(),
-      })
+      // Safety net: processSync handles failure durably, but if its catch
+      // itself throws, this prevents an unhandled rejection.
+      console.error(`[sync:${sessionId}] Async sync fatal (unexpected):`, err)
     })
 
     // Return immediately with sessionId for polling
