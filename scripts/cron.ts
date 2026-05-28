@@ -18,11 +18,13 @@ import { buildIngestPayload } from '../src/lib/ingest'
 import { fetchTicketEmails } from '../src/lib/imap-client'
 import { imapCredentials, syncHistory } from '../src/lib/schema'
 import {
+  callSyncProjection,
   computeJitterMs,
-  tryAcquireLock,
   recordAttempt,
-  recordSuccess,
+  recordCursorAdvance,
   recordFailure,
+  recordSuccess,
+  tryAcquireLock,
 } from '../src/lib/sync-helpers'
 
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE || '*/15 * * * *' // Every 15 minutes
@@ -82,7 +84,13 @@ async function runSync(): Promise<void> {
 
     const startedAt = new Date()
     const historyId = crypto.randomUUID()
-    let ingestedCount = 0
+    const projectionSecret = process.env.SYNC_PROJECTION_SECRET
+
+    // Per-credential tracking for sync-projection
+    let importedCount = 0
+    let skippedCount = 0
+    let failedCount = 0
+    let newestImportedEmail: { importedAt: Date; emailDate: Date } | null = null
 
     try {
       // --- Step 3: Deterministic jitter before IMAP connection ---
@@ -102,7 +110,7 @@ async function runSync(): Promise<void> {
           email: cred.imapEmail,
           encryptedPassword: cred.encryptedPassword,
           iv: cred.iv,
-          lastSyncAt: cred.lastSyncAt,
+          lastSyncAt: cred.syncCursorAt ?? cred.lastSyncAt,
         },
         encryptionKey,
       )
@@ -113,7 +121,9 @@ async function runSync(): Promise<void> {
         .filter((e) => shouldProcessEmail(e.subject, e.from))
         .sort((a, b) => a.date.getTime() - b.date.getTime())
 
-      // Dedup: check which emails already exist in the main app
+      const fullEmailsFound = emails.length
+
+      // Dedup: which emails already exist in the main app
       const existingHashes = await checkAlreadyIngested(
         mainAppUrl,
         ingestApiKey,
@@ -142,6 +152,7 @@ async function runSync(): Promise<void> {
           email.date,
         )
         if (existingHashes.has(hash)) {
+          skippedCount++
           console.log(`[cron] Skipping already-imported: "${email.subject}" (${email.messageId})`)
           continue
         }
@@ -163,39 +174,100 @@ async function runSync(): Promise<void> {
           })
 
           if (response.ok) {
-            ingestedCount++
+            importedCount++
+            // Track newest email for import-timestamp updates
+            if (!newestImportedEmail || email.date > newestImportedEmail.emailDate) {
+              newestImportedEmail = { importedAt: new Date(), emailDate: email.date }
+            }
           } else {
+            failedCount++
             console.error(`[cron] Ingest failed for ${email.messageId}:`, await response.text())
           }
         } catch (error) {
+          failedCount++
           console.error(`[cron] Error ingesting email ${email.messageId}:`, error)
         }
       }
 
-      // Record success: clear lock/backoff/error, update timestamps
+      // Record success: clear lock/backoff/error, update lastSyncSuccessAt
+      const completedAt = new Date()
       await recordSuccess(db, cred.id, LOCK_OWNER)
 
-      // Log success with credentialId
+      // Don't advance cursor when any emails failed — the next sync will
+      // re-fetch the same date range so nothing is missed.
+      if (failedCount === 0) {
+        await recordCursorAdvance(
+          db,
+          cred.id,
+          completedAt,
+          newestImportedEmail?.importedAt ?? null,
+          newestImportedEmail?.emailDate ?? null,
+        )
+      }
+
+      // Log sync-projection for auto sync (mode: auto)
+      await callSyncProjection(mainAppUrl, projectionSecret, {
+        userId: cred.userId,
+        status: 'completed',
+        metadata: {
+          mode: 'auto',
+          credentialId: cred.id,
+          recipientEmail: cred.imapEmail,
+          emailsFound: fullEmailsFound,
+          emailsImported: importedCount,
+          emailsSkipped: skippedCount,
+          emailsFailed: failedCount,
+          lastImportedEmailAt: newestImportedEmail?.importedAt?.getTime(),
+          lastImportedEmailDate: newestImportedEmail?.emailDate?.getTime(),
+        },
+      })
+
+      const syncStatus =
+        failedCount === 0
+          ? 'success'
+          : importedCount > 0
+            ? 'partial'
+            : 'error'
+
       await db.insert(syncHistory).values({
         id: historyId,
         userId: cred.userId,
         credentialId: cred.id,
-        status: ingestedCount === emails.length ? 'success' : 'partial',
-        emailsFound: emails.length,
-        emailsIngested: ingestedCount,
+        status: syncStatus,
+        emailsFound: fullEmailsFound,
+        emailsIngested: importedCount,
         startedAt,
-        completedAt: new Date(),
+        completedAt,
       })
 
       console.log(
-        `[cron] Sync complete for ${cred.imapEmail}: ${ingestedCount}/${emails.length} ingested`,
+        `[cron] Sync complete for ${cred.imapEmail}: ${importedCount} imported, ${skippedCount} skipped, ${failedCount} failed (${fullEmailsFound} found)`,
       )
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       console.error(`[cron] Sync failed for ${cred.imapEmail}:`, error)
 
       // Record failure: set backoff, failure state, release lock
+      const completedAt = new Date()
       await recordFailure(db, cred.id, LOCK_OWNER, errorMessage)
+
+      // Log sync-projection for failed auto sync
+      await callSyncProjection(mainAppUrl, projectionSecret, {
+        userId: cred.userId,
+        status: 'failed',
+        metadata: {
+          mode: 'auto',
+          credentialId: cred.id,
+          recipientEmail: cred.imapEmail,
+          emailsFound: 0,
+          emailsImported: 0,
+          emailsSkipped: 0,
+          emailsFailed: 0,
+          errorCode: 'SYNC_FAILED',
+          errorMessage,
+        },
+        errorMessage,
+      })
 
       // Log error with credentialId
       await db.insert(syncHistory).values({
@@ -207,7 +279,7 @@ async function runSync(): Promise<void> {
         emailsIngested: 0,
         errorMessage,
         startedAt,
-        completedAt: new Date(),
+        completedAt,
       })
     }
   }

@@ -209,3 +209,153 @@ export async function recordFailure(
       ),
     )
 }
+
+/**
+ * Advance the IMAP cursor (syncCursorAt) after a sync run that
+ * completed with no failed selected emails.
+ *
+ * The cursor is set to the time the sync completed, so the next
+ * incremental fetch uses this as the SINCE date. Advances even on
+ * zero-result checks to avoid re-scanning the same mailbox range.
+ * On partial failure the caller should NOT call this helper so the
+ * cursor stays at its previous position.
+ *
+ * Also updates lastImportedEmailAt and lastImportedEmailDate when
+ * new emails were actually ingested during this sync run. The
+ * lastImportedEmailAt field records *when* the newest email was
+ * ingested (system clock), while lastImportedEmailDate records the
+ * email's Date header value.
+ *
+ * No lock ownership required — cursor/import updates are informational
+ * and not part of the concurrency-protected critical section.
+ */
+export async function recordCursorAdvance(
+  db: DatabaseType,
+  credentialId: string,
+  cursorDate: Date,
+  importedEmailAt?: Date | null,
+  importedEmailDate?: Date | null,
+): Promise<void> {
+  const now = new Date()
+  const updates: Record<string, unknown> = {
+    syncCursorAt: cursorDate,
+    updatedAt: now,
+  }
+  if (importedEmailAt) updates.lastImportedEmailAt = importedEmailAt
+  if (importedEmailDate) updates.lastImportedEmailDate = importedEmailDate
+
+  await db
+    .update(imapCredentials)
+    .set(updates)
+    .where(eq(imapCredentials.id, credentialId))
+}
+
+/**
+ * Update lastManualSyncAt after a manual sync completes.
+ *
+ * No lock ownership required — this is called at the end of a
+ * user-initiated manual sync flow (not from auto cron).
+ */
+export async function recordManualSyncAt(
+  db: DatabaseType,
+  credentialId: string,
+): Promise<void> {
+  const now = new Date()
+  await db
+    .update(imapCredentials)
+    .set({
+      lastManualSyncAt: now,
+      updatedAt: now,
+    })
+    .where(eq(imapCredentials.id, credentialId))
+}
+
+/**
+ * Record a successful manual sync: sets lastSyncSuccessAt and
+ * lastManualSyncAt, clears failure/backoff state, and resets
+ * consecutiveFailures.
+ *
+ * Unlike recordSuccess (which requires lock ownership for the
+ * auto-cron lock model), this helper is for the user-initiated
+ * manual sync path which does not use locks.
+ */
+export async function recordManualSuccess(
+  db: DatabaseType,
+  credentialId: string,
+): Promise<void> {
+  const now = new Date()
+  await db
+    .update(imapCredentials)
+    .set({
+      lastSyncSuccessAt: now,
+      lastManualSyncAt: now,
+      consecutiveFailures: 0,
+      backoffUntil: null,
+      lastSyncError: null,
+      updatedAt: now,
+    })
+    .where(eq(imapCredentials.id, credentialId))
+}
+
+/**
+ * SyncProjectionPayload — matches the main app's SyncProjectionBodySchema.
+ */
+export interface SyncProjectionPayload {
+  userId: string
+  status: 'completed' | 'failed'
+  metadata?: {
+    mode?: string
+    credentialId?: string
+    recipientEmail?: string
+    emailsFound?: number
+    emailsImported?: number
+    emailsSkipped?: number
+    emailsFailed?: number
+    lastImportedEmailAt?: number
+    lastImportedEmailDate?: number
+    errorCode?: string
+    errorMessage?: string
+  }
+  errorMessage?: string
+}
+
+/**
+ * POST a sync-projection event to the main app.
+ *
+ * This is called after every sync run (auto or manual) so the main app
+ * can track sync state via user_actions. Returns the parsed response
+ * body. Logs a warning and returns {success: false} when the secret is
+ * not configured or the call fails — never throws.
+ */
+export async function callSyncProjection(
+  mainAppUrl: string,
+  projectionSecret: string | undefined,
+  body: SyncProjectionPayload,
+): Promise<{ success: boolean; actionId?: string }> {
+  if (!projectionSecret) {
+    console.warn('[sync-projection] SYNC_PROJECTION_SECRET not configured, skipping')
+    return { success: false }
+  }
+
+  try {
+    const response = await fetch(`${mainAppUrl}/api/user-action/sync-projection`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${projectionSecret}`,
+      },
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      const text = await response.text()
+      console.error(`[sync-projection] HTTP ${response.status}:`, text)
+      return { success: false }
+    }
+
+    return (await response.json()) as { success: boolean; actionId?: string }
+  } catch (error) {
+    console.error('[sync-projection] Network error:', error)
+    return { success: false }
+  }
+}

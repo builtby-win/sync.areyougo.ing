@@ -5,13 +5,17 @@ import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import {
+  callSyncProjection,
   computeJitterMs,
   computeBackoffMs,
-  tryAcquireLock,
-  releaseLock,
   recordAttempt,
-  recordSuccess,
+  recordCursorAdvance,
   recordFailure,
+  recordManualSuccess,
+  recordManualSyncAt,
+  recordSuccess,
+  releaseLock,
+  tryAcquireLock,
   LOCK_TTL_MS,
   MAX_BACKOFF_MS,
 } from './sync-helpers'
@@ -20,14 +24,18 @@ import {
 const testSchema = {
   imapCredentials: sqliteTable('imap_credentials', {
     id: text('id').primaryKey(),
-    lockOwner: text('lock_owner'),
-    lockExpiresAt: integer('lock_expires_at', { mode: 'timestamp' }),
-    backoffUntil: integer('backoff_until', { mode: 'timestamp' }),
-    consecutiveFailures: integer('consecutive_failures').default(0).notNull(),
-    lastSyncError: text('last_sync_error'),
+    syncCursorAt: integer('sync_cursor_at', { mode: 'timestamp' }),
     lastSyncAttemptAt: integer('last_sync_attempt_at', { mode: 'timestamp' }),
     lastSyncSuccessAt: integer('last_sync_success_at', { mode: 'timestamp' }),
     lastSyncFailureAt: integer('last_sync_failure_at', { mode: 'timestamp' }),
+    lastSyncError: text('last_sync_error'),
+    lastImportedEmailAt: integer('last_imported_email_at', { mode: 'timestamp' }),
+    lastImportedEmailDate: integer('last_imported_email_date', { mode: 'timestamp' }),
+    lastManualSyncAt: integer('last_manual_sync_at', { mode: 'timestamp' }),
+    backoffUntil: integer('backoff_until', { mode: 'timestamp' }),
+    consecutiveFailures: integer('consecutive_failures').default(0).notNull(),
+    lockOwner: text('lock_owner'),
+    lockExpiresAt: integer('lock_expires_at', { mode: 'timestamp' }),
     updatedAt: integer('updated_at', { mode: 'timestamp' }),
   }),
 }
@@ -37,14 +45,18 @@ function createTestDb() {
   sqlite.exec(`
     CREATE TABLE imap_credentials (
       id TEXT PRIMARY KEY,
-      lock_owner TEXT,
-      lock_expires_at INTEGER,
-      backoff_until INTEGER,
-      consecutive_failures INTEGER NOT NULL DEFAULT 0,
-      last_sync_error TEXT,
+      sync_cursor_at INTEGER,
       last_sync_attempt_at INTEGER,
       last_sync_success_at INTEGER,
       last_sync_failure_at INTEGER,
+      last_sync_error TEXT,
+      last_imported_email_at INTEGER,
+      last_imported_email_date INTEGER,
+      last_manual_sync_at INTEGER,
+      backoff_until INTEGER,
+      consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      lock_owner TEXT,
+      lock_expires_at INTEGER,
       updated_at INTEGER
     )
   `)
@@ -398,6 +410,230 @@ describe('backoff skip logic', () => {
     const shouldSkip = cred.backoffUntil !== null && cred.backoffUntil > new Date()
     assert.strictEqual(shouldSkip, false)
     assert.strictEqual(cred.backoffUntil, null)
+  })
+})
+
+// ----- recordCursorAdvance tests -----
+
+describe('recordCursorAdvance', () => {
+  let db: TestDb
+
+  beforeEach(() => {
+    db = createTestDb()
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-1',
+      consecutiveFailures: 0,
+    }).run()
+  })
+
+  it('sets syncCursorAt to the given date', async () => {
+    const cursorDate = new Date('2026-05-28T12:00:00Z')
+    await recordCursorAdvance(db as any, 'cred-1', cursorDate)
+
+    const cred = getCred(db, 'cred-1')
+    assert.ok(cred.syncCursorAt instanceof Date)
+    assert.strictEqual(
+      Math.floor(cred.syncCursorAt!.getTime() / 1000),
+      Math.floor(cursorDate.getTime() / 1000),
+    )
+  })
+
+  it('sets lastImportedEmailAt and lastImportedEmailDate when provided', async () => {
+    const cursorDate = new Date('2026-05-28T12:00:00Z')
+    const importAt = new Date('2026-05-28T12:05:00Z')
+    const importDate = new Date('2026-05-28T10:00:00Z')
+
+    await recordCursorAdvance(db as any, 'cred-1', cursorDate, importAt, importDate)
+
+    const cred = getCred(db, 'cred-1')
+    assert.strictEqual(
+      Math.floor(cred.lastImportedEmailAt!.getTime() / 1000),
+      Math.floor(importAt.getTime() / 1000),
+    )
+    assert.strictEqual(
+      Math.floor(cred.lastImportedEmailDate!.getTime() / 1000),
+      Math.floor(importDate.getTime() / 1000),
+    )
+  })
+
+  it('does not set import fields when null is passed', async () => {
+    const cursorDate = new Date()
+    await recordCursorAdvance(db as any, 'cred-1', cursorDate, null, null)
+
+    const cred = getCred(db, 'cred-1')
+    assert.strictEqual(cred.lastImportedEmailAt, null)
+    assert.strictEqual(cred.lastImportedEmailDate, null)
+  })
+
+  it('updates only the target credential', async () => {
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-2',
+      consecutiveFailures: 0,
+    }).run()
+
+    await recordCursorAdvance(db as any, 'cred-1', new Date())
+
+    const cred2 = getCred(db, 'cred-2')
+    assert.strictEqual(cred2.syncCursorAt, null)
+  })
+})
+
+// ----- recordManualSyncAt tests -----
+
+describe('recordManualSyncAt', () => {
+  let db: TestDb
+
+  beforeEach(() => {
+    db = createTestDb()
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-1',
+      consecutiveFailures: 0,
+    }).run()
+  })
+
+  it('sets lastManualSyncAt', async () => {
+    await recordManualSyncAt(db as any, 'cred-1')
+
+    const cred = getCred(db, 'cred-1')
+    assert.ok(cred.lastManualSyncAt instanceof Date)
+  })
+
+  it('updates only the target credential', async () => {
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-2',
+      consecutiveFailures: 0,
+    }).run()
+
+    await recordManualSyncAt(db as any, 'cred-1')
+
+    const cred2 = getCred(db, 'cred-2')
+    assert.strictEqual(cred2.lastManualSyncAt, null)
+  })
+})
+
+// ----- recordManualSuccess tests -----
+
+describe('recordManualSuccess', () => {
+  let db: TestDb
+
+  beforeEach(() => {
+    db = createTestDb()
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-1',
+      consecutiveFailures: 3,
+      backoffUntil: new Date(Date.now() + 3600_000),
+      lastSyncError: 'previous error',
+    }).run()
+  })
+
+  it('sets lastSyncSuccessAt and lastManualSyncAt', async () => {
+    await recordManualSuccess(db as any, 'cred-1')
+
+    const cred = getCred(db, 'cred-1')
+    assert.ok(cred.lastSyncSuccessAt instanceof Date)
+    assert.ok(cred.lastManualSyncAt instanceof Date)
+  })
+
+  it('clears failure state (consecutiveFailures, backoffUntil, lastSyncError)', async () => {
+    await recordManualSuccess(db as any, 'cred-1')
+
+    const cred = getCred(db, 'cred-1')
+    assert.strictEqual(cred.consecutiveFailures, 0)
+    assert.strictEqual(cred.backoffUntil, null)
+    assert.strictEqual(cred.lastSyncError, null)
+  })
+
+  it('updates only the target credential', async () => {
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-2',
+      consecutiveFailures: 0,
+    }).run()
+
+    await recordManualSuccess(db as any, 'cred-1')
+
+    const cred2 = getCred(db, 'cred-2')
+    assert.strictEqual(cred2.lastSyncSuccessAt, null)
+    assert.strictEqual(cred2.lastManualSyncAt, null)
+  })
+})
+
+// ----- Cursor fallback tests -----
+
+describe('cursor fallback (syncCursorAt ?? lastSyncAt)', () => {
+  it('uses syncCursorAt when both are present', () => {
+    const syncCursorAt = new Date('2026-05-28T10:00:00Z')
+    const lastSyncAt = new Date('2026-05-27T00:00:00Z')
+    const result = syncCursorAt ?? lastSyncAt
+    assert.strictEqual(result, syncCursorAt)
+    assert.notStrictEqual(result, lastSyncAt)
+  })
+
+  it('falls back to lastSyncAt when syncCursorAt is null', () => {
+    const syncCursorAt: Date | null = null
+    const lastSyncAt = new Date('2026-05-27T00:00:00Z')
+    const result = syncCursorAt ?? lastSyncAt
+    assert.strictEqual(result, lastSyncAt)
+  })
+
+  it('falls back to lastSyncAt when syncCursorAt is undefined', () => {
+    const syncCursorAt: Date | undefined = undefined
+    const lastSyncAt = new Date('2026-05-27T00:00:00Z')
+    const result = syncCursorAt ?? lastSyncAt
+    assert.strictEqual(result, lastSyncAt)
+  })
+})
+
+// ----- Cursor-on-failure behavior -----
+
+describe('cursor on partial failure', () => {
+  let db: TestDb
+
+  beforeEach(() => {
+    db = createTestDb()
+    db.insert(testSchema.imapCredentials).values({
+      id: 'cred-1',
+      consecutiveFailures: 0,
+      syncCursorAt: new Date('2026-05-27T00:00:00Z'),
+    }).run()
+  })
+
+  it('does not advance syncCursorAt when failedCount > 0 (manual sync)', async () => {
+    // Simulate a manual sync with failures: only recordManualSuccess,
+    // but DO NOT call recordCursorAdvance (matching ingest.ts behavior)
+    await recordManualSuccess(db as any, 'cred-1')
+
+    const cred = getCred(db, 'cred-1')
+    // success and manual fields updated
+    assert.ok(cred.lastSyncSuccessAt instanceof Date)
+    assert.ok(cred.lastManualSyncAt instanceof Date)
+    // cursor stays at its previous position (unchanged)
+    assert.ok(cred.syncCursorAt instanceof Date)
+    assert.strictEqual(
+      Math.floor(cred.syncCursorAt!.getTime() / 1000),
+      Math.floor(new Date('2026-05-27T00:00:00Z').getTime() / 1000),
+    )
+  })
+})
+
+// ----- callSyncProjection tests -----
+
+describe('callSyncProjection', () => {
+  it('returns success:false when secret is not configured', async () => {
+    const result = await callSyncProjection('http://localhost', undefined, {
+      userId: 'user-1',
+      status: 'completed',
+    })
+
+    assert.deepStrictEqual(result, { success: false })
+  })
+
+  it('returns success:false on network error (no server)', async () => {
+    const result = await callSyncProjection('http://localhost:1', 'test-secret', {
+      userId: 'user-1',
+      status: 'completed',
+    })
+
+    assert.strictEqual(result.success, false)
   })
 })
 

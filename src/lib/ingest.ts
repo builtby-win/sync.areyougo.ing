@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { getDb } from './db'
 import { redactPii } from './redaction/redactor'
 import { imapCredentials, syncHistory } from './schema'
+import { callSyncProjection, recordCursorAdvance, recordManualSuccess } from './sync-helpers'
 import { type SyncSession, getSession, updateEmailStatus, updateSession } from './sync-sessions'
 
 interface IngestOptions {
@@ -110,31 +111,86 @@ export async function runIngestion({ sessionId, cred, mainAppUrl, ingestApiKey }
     }
   }
 
-  // Update timestamps for this specific credential
-  await db
-    .update(imapCredentials)
-    .set({
-      lastSyncAt: new Date(),
-      lastManualSyncAt: new Date(), // This might need logic if it's auto sync? But runIngestion implies actual ingest.
-      updatedAt: new Date(),
-    })
-    .where(eq(imapCredentials.id, cred.id))
+  // Determine stats from session
+  const finalSession = getSession(sessionId)!
+  const importedCount = finalSession.totalIngested
+  const skippedCount = finalSession.emails.filter((e) => e.ingestStatus === 'skipped').length
+  const failedCount = finalSession.emails.filter((e) => e.ingestStatus === 'failed').length
+  const foundCount = finalSession.totalFound
+
+  // Find the newest imported email for import-timestamp tracking
+  const importedEmails = finalSession.emails.filter((e) => e.ingestStatus === 'success')
+  let newestImportedEmail: { importedAt: Date; emailDate: Date } | null = null
+  if (importedEmails.length > 0) {
+    const sorted = [...importedEmails].sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+    )
+    newestImportedEmail = {
+      importedAt: new Date(),
+      emailDate: new Date(sorted[0].date),
+    }
+  }
+
+  await recordManualSuccess(db, cred.id)
+
+  // Don't advance cursor when any emails failed — the next sync will
+  // re-fetch the same date range so nothing is missed.
+  // This covers both explicit syncCursorAt and legacy lastSyncAt.
+  if (failedCount === 0) {
+    await recordCursorAdvance(
+      db,
+      cred.id,
+      new Date(),
+      newestImportedEmail?.importedAt ?? null,
+      newestImportedEmail?.emailDate ?? null,
+    )
+
+    // Keep legacy lastSyncAt in sync for backward compatibility
+    // (used as fallback when syncCursorAt is null)
+    await db
+      .update(imapCredentials)
+      .set({ lastSyncAt: new Date(), updatedAt: new Date() })
+      .where(eq(imapCredentials.id, cred.id))
+  }
+
+  // Log sync-projection for manual sync mode
+  const projectionSecret = process.env.SYNC_PROJECTION_SECRET
+  await callSyncProjection(mainAppUrl, projectionSecret, {
+    userId: cred.userId,
+    status: 'completed',
+    metadata: {
+      mode: 'manual',
+      credentialId: cred.id,
+      recipientEmail: cred.imapEmail,
+      emailsFound: foundCount,
+      emailsImported: importedCount,
+      emailsSkipped: skippedCount,
+      emailsFailed: failedCount,
+      lastImportedEmailAt: newestImportedEmail?.importedAt?.getTime(),
+      lastImportedEmailDate: newestImportedEmail?.emailDate?.getTime(),
+    },
+  })
 
   // Log to history with credentialId
-  const finalSession = getSession(sessionId)!
+  const syncStatus =
+    failedCount > 0 && importedCount > 0
+      ? 'partial'
+      : foundCount > 0 && importedCount === 0 && failedCount > 0
+        ? 'error'
+        : 'success'
   await db.insert(syncHistory).values({
     id: crypto.randomUUID(),
     userId: cred.userId,
     credentialId: cred.id,
-    status: finalSession.totalIngested > 0 ? 'success' : 'partial', // Simplified status logic
-    emailsFound: finalSession.totalFound,
-    emailsIngested: finalSession.totalIngested,
+    status: syncStatus,
+    emailsFound: foundCount,
+    emailsIngested: importedCount,
     startedAt: finalSession.startedAt,
     completedAt: new Date(),
   })
 
   updateSession(sessionId, { status: 'completed', completedAt: new Date() })
   console.log(
-    `[sync:${sessionId}] Complete: ${finalSession.totalIngested}/${finalSession.totalFound} ingested`,
+    `[sync:${sessionId}] Complete: ${importedCount}/${foundCount} ingested (${skippedCount} skipped, ${failedCount} failed)`,
   )
 }

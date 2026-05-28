@@ -62,17 +62,18 @@ function extractEmailAddress(from: string): string {
 // Async function to process sync in background
 async function processSync(
   sessionId: string,
-  cred: {
-    id: string
-    userId: string
-    userEmail: string
-    host: string
-    port: number
-    imapEmail: string
-    encryptedPassword: string
-    iv: string
-    lastSyncAt: Date | null
-  },
+    cred: {
+      id: string
+      userId: string
+      userEmail: string
+      host: string
+      port: number
+      imapEmail: string
+      encryptedPassword: string
+      iv: string
+      lastSyncAt: Date | null
+      syncCursorAt: Date | null
+    },
   encryptionKey: string,
   lookbackDays: number,
   mainAppUrl: string,
@@ -141,7 +142,7 @@ async function processSync(
       email: cred.imapEmail,
       encryptedPassword: cred.encryptedPassword,
       iv: cred.iv,
-      lastSyncAt: cred.lastSyncAt,
+      lastSyncAt: cred.syncCursorAt ?? cred.lastSyncAt,
     }
 
     if (searchTerm) {
@@ -344,7 +345,7 @@ export const POST: APIRoute = async ({ request }) => {
         email: cred.imapEmail,
         encryptedPassword: cred.encryptedPassword,
         iv: cred.iv,
-        lastSyncAt: cred.lastSyncAt,
+        lastSyncAt: cred.syncCursorAt ?? cred.lastSyncAt,
       }
       const emails = searchTerm
         ? await searchEmailsByQuery(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate, searchTerm })
