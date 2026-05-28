@@ -10,7 +10,7 @@ services:
       - MAIN_APP_URL=${MAIN_APP_URL:-https://areyougo.ing}
       - INGEST_API_KEY=${INGEST_API_KEY:-}
       - DATABASE_PATH=/app/data/sync.db
-      - CRON_SCHEDULE=${CRON_SCHEDULE:-0 6 * * *}
+      - CRON_SCHEDULE=${CRON_SCHEDULE:-*/15 * * * *}
     volumes:
       - sync-data:/app/data
     restart: unless-stopped

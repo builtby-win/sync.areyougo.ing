@@ -20,6 +20,13 @@ import {
 } from '../../lib/sync-sessions'
 import { verifySession } from '../../lib/verify-session'
 import { checkAlreadyIngested, computeEmailHash } from '../../lib/dedup'
+import {
+  callSyncProjection,
+  recordAttempt,
+  recordFailure,
+  releaseLock,
+  tryAcquireLock,
+} from '../../lib/sync-helpers'
 
 interface SyncRequest {
   credentialId: string
@@ -72,11 +79,13 @@ async function processSync(
     encryptedPassword: string
     iv: string
     lastSyncAt: Date | null
+    syncCursorAt: Date | null
   },
   encryptionKey: string,
   lookbackDays: number,
   mainAppUrl: string,
   ingestApiKey: string | undefined,
+  lockOwner: string,
   waitForSelection = false,
   searchTerm?: string,
   sinceDate?: string,
@@ -141,7 +150,7 @@ async function processSync(
       email: cred.imapEmail,
       encryptedPassword: cred.encryptedPassword,
       iv: cred.iv,
-      lastSyncAt: cred.lastSyncAt,
+      lastSyncAt: cred.syncCursorAt ?? cred.lastSyncAt,
     }
 
     if (searchTerm) {
@@ -203,6 +212,10 @@ async function processSync(
     }
 
     if (waitForSelection) {
+      // Release the lock before waiting for user selection — the lock protects
+      // IMAP operations, not user thinking time. confirm.ts will acquire a new
+      // lock before the ingestion phase.
+      await releaseLock(db, cred.id, lockOwner)
       updateSession(sessionId, { status: 'waiting_for_selection' })
       console.log(`[sync:${sessionId}] Waiting for user selection`)
       return
@@ -214,15 +227,44 @@ async function processSync(
       cred: { id: cred.id, userId: cred.userId, imapEmail: cred.imapEmail },
       mainAppUrl,
       ingestApiKey,
+      lockOwner,
     })
   } catch (error) {
     console.error(`[sync:${sessionId}] Error:`, error)
+
+    // Durable failure state: set failure, syncHistory, and projection
+    const errMsg = error instanceof Error ? error.message : 'Sync failed'
+    await recordFailure(db, cred.id, lockOwner, errMsg).catch(() => {})
+    await db
+      .insert(syncHistory)
+      .values({
+        id: crypto.randomUUID(),
+        userId: cred.userId,
+        credentialId: cred.id,
+        status: 'error',
+        errorMessage: errMsg,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      })
+      .catch(() => {})
+    const projectionSecret = process.env.SYNC_PROJECTION_SECRET
+    await callSyncProjection(mainAppUrl, projectionSecret, {
+      userId: cred.userId,
+      status: 'failed',
+      errorMessage: errMsg,
+      metadata: {
+        mode: 'manual',
+        credentialId: cred.id,
+        recipientEmail: cred.imapEmail,
+        errorMessage: errMsg,
+      },
+    }).catch(() => {})
+
     updateSession(sessionId, {
       status: 'failed',
-      error: error instanceof Error ? error.message : 'Sync failed',
+      error: errMsg,
       completedAt: new Date(),
     })
-    throw error
   }
 }
 
@@ -336,42 +378,79 @@ export const POST: APIRoute = async ({ request }) => {
       `[sync] Fetching emails with ${lookbackDays} day lookback, dryRun=${dryRun}, credentialId=${credentialId}`,
     )
 
-    // If dry run, fetch and return preview synchronously
+    // If dry run, acquire lock, fetch preview, release lock, return
     if (dryRun) {
-      const dryRunCredentials = {
-        host: cred.host,
-        port: cred.port,
-        email: cred.imapEmail,
-        encryptedPassword: cred.encryptedPassword,
-        iv: cred.iv,
-        lastSyncAt: cred.lastSyncAt,
+      const dryRunLockOwner = `manual-${crypto.randomUUID().slice(0, 8)}`
+      const acquired = await tryAcquireLock(db, credentialId, dryRunLockOwner)
+      if (!acquired) {
+        console.log(`[sync] Lock held for credential ${credentialId}, dry-run rejected`)
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: 'Another sync is currently running for this credential. Please try again later.',
+          } satisfies SyncResponse),
+          { status: 409, headers: { 'Content-Type': 'application/json' } },
+        )
       }
-      const emails = searchTerm
-        ? await searchEmailsByQuery(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate, searchTerm })
-        : await fetchTicketEmails(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate })
 
-      const emailsForIngest: EmailForIngest[] = emails.map((email) => ({
-        messageId: email.messageId,
-        from: email.from,
-        subject: email.subject,
-        date: email.date.toISOString(),
-        body: email.body,
-      }))
+      try {
+        const dryRunCredentials = {
+          host: cred.host,
+          port: cred.port,
+          email: cred.imapEmail,
+          encryptedPassword: cred.encryptedPassword,
+          iv: cred.iv,
+          lastSyncAt: cred.syncCursorAt ?? cred.lastSyncAt,
+        }
+        const emails = searchTerm
+          ? await searchEmailsByQuery(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate, searchTerm })
+          : await fetchTicketEmails(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate })
 
+        const emailsForIngest: EmailForIngest[] = emails.map((email) => ({
+          messageId: email.messageId,
+          from: email.from,
+          subject: email.subject,
+          date: email.date.toISOString(),
+          body: email.body,
+        }))
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            emails: emailsForIngest,
+            emailsFound: emails.length,
+          } satisfies SyncResponse),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      } finally {
+        await releaseLock(db, credentialId, dryRunLockOwner).catch(() => {})
+      }
+    }
+
+    // For real sync: acquire per-credential lock, then create session
+    // and process asynchronously. The lock prevents concurrent manual and
+    // auto sync on the same credential.
+    const manualLockOwner = `manual-${crypto.randomUUID().slice(0, 8)}`
+
+    const acquired = await tryAcquireLock(db, credentialId, manualLockOwner)
+    if (!acquired) {
+      console.log(`[sync] Lock held for credential ${credentialId}, returning 409`)
       return new Response(
         JSON.stringify({
-          success: true,
-          emails: emailsForIngest,
-          emailsFound: emails.length,
+          success: false,
+          error: 'Another sync is currently running for this credential. Please try again later.',
         } satisfies SyncResponse),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
+        { status: 409, headers: { 'Content-Type': 'application/json' } },
       )
     }
 
-    // For real sync: create session and process asynchronously
     cleanupSessions()
     const sendersTotal = searchTerm ? 1 : APPROVED_SENDERS.length
     const sessionId = createSession(user.id, cred.id, sendersTotal)
+
+    // Stamping lastSyncAttemptAt before processing ensures that even if the
+    // sync fails, the credential shows a recent attempt (vs "never checked").
+    await recordAttempt(db, credentialId, manualLockOwner)
 
     // Start async processing (don't await)
     processSync(
@@ -381,19 +460,16 @@ export const POST: APIRoute = async ({ request }) => {
       lookbackDays,
       mainAppUrl,
       ingestApiKey,
+      manualLockOwner,
       waitForSelection,
       searchTerm,
       sinceDate,
       beforeDate,
     ).catch((err) => {
-      console.error(`[sync:${sessionId}] Async sync error:`, err)
-        updateSession(sessionId, {
-          status: 'failed',
-          error: err instanceof Error ? err.message : 'Sync failed',
-          completedAt: new Date(),
-        })
-      },
-    )
+      // Safety net: processSync handles failure durably, but if its catch
+      // itself throws, this prevents an unhandled rejection.
+      console.error(`[sync:${sessionId}] Async sync fatal (unexpected):`, err)
+    })
 
     // Return immediately with sessionId for polling
     return new Response(

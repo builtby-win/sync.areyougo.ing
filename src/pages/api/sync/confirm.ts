@@ -3,8 +3,9 @@ import { and, eq } from 'drizzle-orm'
 import { getDb } from '../../../lib/db'
 import { runIngestion } from '../../../lib/ingest'
 import { imapCredentials } from '../../../lib/schema'
-import { getSession, updateEmailStatus, updateSession } from '../../../lib/sync-sessions'
+import { getSession } from '../../../lib/sync-sessions'
 import { verifySession } from '../../../lib/verify-session'
+import { tryAcquireLock } from '../../../lib/sync-helpers'
 
 interface ConfirmRequest {
   sessionId: string
@@ -82,15 +83,28 @@ export const POST: APIRoute = async ({ request }) => {
     }
     const cred = creds[0]
 
-    // Mark unselected emails as skipped
+    // Acquire lock before mutating session state so a 409 leaves the
+    // session emails unchanged (no partial skip mutation).
+    const confirmLockOwner = `manual-${crypto.randomUUID().slice(0, 8)}`
+    const acquired = await tryAcquireLock(db, cred.id, confirmLockOwner)
+    if (!acquired) {
+      return new Response(JSON.stringify({
+        error: 'Another sync is currently running for this credential. Please try again.',
+      }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    // Mark unselected emails as skipped (lock is held — safe to mutate)
     const selectedSet = new Set(selectedMessageIds)
     let skippedCount = 0
     
     session.emails.forEach((email) => {
-        if (!selectedSet.has(email.messageId)) {
-            email.ingestStatus = 'skipped'
-            skippedCount++
-        }
+      if (!selectedSet.has(email.messageId)) {
+        email.ingestStatus = 'skipped'
+        skippedCount++
+      }
     })
 
     console.log(`[sync:${sessionId}] Confirmed selection. ${selectedMessageIds.length} selected, ${skippedCount} skipped.`)
@@ -101,8 +115,9 @@ export const POST: APIRoute = async ({ request }) => {
       cred: { id: cred.id, userId: cred.userId, imapEmail: cred.imapEmail },
       mainAppUrl,
       ingestApiKey,
+      lockOwner: confirmLockOwner,
     }).catch((err: unknown) => {
-        console.error(`[sync:${sessionId}] Async ingestion error:`, err)
+      console.error(`[sync:${sessionId}] Async ingestion error:`, err)
     })
 
     return new Response(JSON.stringify({ success: true, message: 'Ingestion started' }), {

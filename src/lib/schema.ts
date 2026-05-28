@@ -14,8 +14,37 @@ export const imapCredentials = sqliteTable(
     encryptedPassword: text('encrypted_password').notNull(),
     iv: text('iv').notNull(), // AES-GCM initialization vector (base64)
     syncMode: text('sync_mode').notNull().default('manual'), // 'manual' or 'auto_daily'
-    lastSyncAt: integer('last_sync_at', { mode: 'timestamp' }), // Last successful sync (manual or auto)
+    // DEPRECATED: legacy field used as both IMAP cursor and "last checked" timestamp.
+    // Replaced by syncCursorAt (cursor) and lastSyncSuccessAt (check timestamp).
+    // Kept for backward compatibility during migration; will be removed in a future iteration.
+    lastSyncAt: integer('last_sync_at', { mode: 'timestamp' }),
     lastManualSyncAt: integer('last_manual_sync_at', { mode: 'timestamp' }), // For rate limiting manual syncs
+
+    // ---- Explicit sync-state fields (added 2026-05-27) ----
+    /** IMAP incremental-fetch cursor. Updated only after a successful mailbox check/search. */
+    syncCursorAt: integer('sync_cursor_at', { mode: 'timestamp' }),
+    /** Updated when any manual or auto sync attempt begins. */
+    lastSyncAttemptAt: integer('last_sync_attempt_at', { mode: 'timestamp' }),
+    /** Updated when a sync check completes successfully, including zero-result checks. */
+    lastSyncSuccessAt: integer('last_sync_success_at', { mode: 'timestamp' }),
+    /** Updated when a sync check fails. */
+    lastSyncFailureAt: integer('last_sync_failure_at', { mode: 'timestamp' }),
+    /** Human-readable error summary from the most recent failure. */
+    lastSyncError: text('last_sync_error'),
+    /** Timestamp of the newest email ingested into the main app. */
+    lastImportedEmailAt: integer('last_imported_email_at', { mode: 'timestamp' }),
+    /** Actual email Date header value for the newest imported email. */
+    lastImportedEmailDate: integer('last_imported_email_date', { mode: 'timestamp' }),
+    /** If set, skip auto sync until this time (bounded exponential backoff). */
+    backoffUntil: integer('backoff_until', { mode: 'timestamp' }),
+    /** Consecutive sync failures counter, reset on success. */
+    consecutiveFailures: integer('consecutive_failures').default(0).notNull(),
+    /** Identity of the process/host holding the per-credential sync lock. */
+    lockOwner: text('lock_owner'),
+    /** When the current lock lease expires. Null if no lock held. */
+    lockExpiresAt: integer('lock_expires_at', { mode: 'timestamp' }),
+    // ---- end explicit sync-state fields ----
+
     createdAt: integer('created_at', { mode: 'timestamp' })
       .notNull()
       .$defaultFn(() => new Date()),

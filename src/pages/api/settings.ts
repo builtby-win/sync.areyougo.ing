@@ -14,8 +14,21 @@ interface SettingsRequest {
 interface AccountInfo {
   id: string
   syncMode: SyncMode
-  lastSyncAt: string | null
+  /** Legacy — kept for backward compatibility. Prefer explicit sync-state fields. */
+  legacyLastSyncAt: string | null
   lastManualSyncAt: string | null
+  // Explicit sync-state fields
+  syncCursorAt: string | null
+  lastSyncAttemptAt: string | null
+  lastSyncSuccessAt: string | null
+  lastSyncFailureAt: string | null
+  lastSyncError: string | null
+  lastImportedEmailAt: string | null
+  lastImportedEmailDate: string | null
+  backoffUntil: string | null
+  consecutiveFailures: number
+  lockOwner: string | null
+  lockExpiresAt: string | null
   provider: string
   imapEmail: string
 }
@@ -55,8 +68,19 @@ export const GET: APIRoute = async ({ request }) => {
         accounts: creds.map((cred) => ({
           id: cred.id,
           syncMode: cred.syncMode as SyncMode,
-          lastSyncAt: cred.lastSyncAt?.toISOString() || null,
+          legacyLastSyncAt: cred.lastSyncAt?.toISOString() || null,
           lastManualSyncAt: cred.lastManualSyncAt?.toISOString() || null,
+          syncCursorAt: cred.syncCursorAt?.toISOString() || null,
+          lastSyncAttemptAt: cred.lastSyncAttemptAt?.toISOString() || null,
+          lastSyncSuccessAt: cred.lastSyncSuccessAt?.toISOString() || null,
+          lastSyncFailureAt: cred.lastSyncFailureAt?.toISOString() || null,
+          lastSyncError: cred.lastSyncError || null,
+          lastImportedEmailAt: cred.lastImportedEmailAt?.toISOString() || null,
+          lastImportedEmailDate: cred.lastImportedEmailDate?.toISOString() || null,
+          backoffUntil: cred.backoffUntil?.toISOString() || null,
+          consecutiveFailures: cred.consecutiveFailures,
+          lockOwner: cred.lockOwner || null,
+          lockExpiresAt: cred.lockExpiresAt?.toISOString() || null,
           provider: cred.provider,
           imapEmail: cred.imapEmail,
         })),
