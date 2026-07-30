@@ -391,7 +391,7 @@ export const POST: APIRoute = async ({ request }) => {
       console.error(`[sync:${sessionId}] Async sync error:`, err)
         updateSession(sessionId, {
           status: 'failed',
-          error: err instanceof Error ? err.message : 'Sync failed',
+          error: getSyncErrorMessage(err),
           completedAt: new Date(),
         })
       },
