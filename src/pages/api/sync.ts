@@ -18,6 +18,7 @@ import {
   updateEmailStatus,
   updateSession,
 } from '../../lib/sync-sessions'
+import { getSyncErrorMessage } from '../../lib/sync-errors'
 import { verifySession } from '../../lib/verify-session'
 import { checkAlreadyIngested, computeEmailHash } from '../../lib/dedup'
 
@@ -101,7 +102,7 @@ async function processSync(
       },
       onConnectionError: (error: Error) => {
         console.error(`[sync:${sessionId}] Connection error:`, error)
-        updateConnectionState(sessionId, 'error', error.message)
+        updateConnectionState(sessionId, 'error', getSyncErrorMessage(error))
       },
       onSenderStart: (sender: string) => {
         console.log(`[sync:${sessionId}] Searching ${sender}...`)
@@ -217,9 +218,10 @@ async function processSync(
     })
   } catch (error) {
     console.error(`[sync:${sessionId}] Error:`, error)
+    const errorMessage = getSyncErrorMessage(error)
     updateSession(sessionId, {
       status: 'failed',
-      error: error instanceof Error ? error.message : 'Sync failed',
+      error: errorMessage,
       completedAt: new Date(),
     })
     throw error
@@ -389,7 +391,7 @@ export const POST: APIRoute = async ({ request }) => {
       console.error(`[sync:${sessionId}] Async sync error:`, err)
         updateSession(sessionId, {
           status: 'failed',
-          error: err instanceof Error ? err.message : 'Sync failed',
+          error: getSyncErrorMessage(err),
           completedAt: new Date(),
         })
       },

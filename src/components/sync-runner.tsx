@@ -608,15 +608,32 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
   }
 
   if (stage === 'error') {
+    const needsReconnect = error?.startsWith('Your email credentials were rejected.') ?? false
+
     return (
       <div className="max-w-md mx-auto py-12 px-4 text-center">
         <div className="w-16 h-16 rounded-full bg-destructive/20 flex items-center justify-center mx-auto mb-6">
           <span className="text-3xl">⚠️</span>
         </div>
-        <h2 className="text-2xl font-bold mb-2 text-destructive">Sync Failed</h2>
-        <p className="text-muted-foreground mb-8">{error}</p>
-        <a href="/" className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:opacity-90">
-          Go Back
+        <h2 className="text-2xl font-bold mb-2 text-destructive">
+          {needsReconnect ? 'Reconnect your email account' : 'Sync Failed'}
+        </h2>
+        <p className="text-muted-foreground mb-3">{error}</p>
+        {needsReconnect && (
+          <p className="text-sm text-muted-foreground mb-8">
+            Remove this account from the connected accounts page, then add it again with a new app
+            password.
+          </p>
+        )}
+        <a
+          href="/"
+          className={`px-4 py-2 rounded-md font-medium hover:opacity-90 ${
+            needsReconnect
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-secondary text-secondary-foreground'
+          }`}
+        >
+          {needsReconnect ? 'Manage connected accounts' : 'Go Back'}
         </a>
       </div>
     )
