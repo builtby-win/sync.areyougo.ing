@@ -115,6 +115,8 @@ function createClient(host: string, port: number, email: string, password: strin
       user: email,
       pass: password,
     },
+    connectionTimeout: 20000,
+    greetingTimeout: 15000,
     // Enable logging to debug iCloud IMAP issues
     logger: {
       debug: (msg: unknown) => console.log('[imapflow:debug]', msg),

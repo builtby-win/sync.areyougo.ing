@@ -48,6 +48,9 @@ export function isTimeoutError(error: unknown): boolean {
     lower.includes('timed out') ||
     lower.includes('timeout') ||
     lower.includes('etimedout') ||
+    lower.includes('connect_timeout') ||
+    lower.includes('failed to establish connection') ||
+    lower.includes('required time') ||
     lower.includes('socket timeout') ||
     lower.includes('connection timeout')
   )
@@ -89,7 +92,11 @@ export function getSyncErrorMessage(error: unknown, provider?: string): string {
   }
 
   if (isTimeoutError(error)) {
-    return 'Connection to the mail server timed out. The server may be temporarily busy or unreachable. Please try again in a few minutes.'
+    const prov = provider?.toLowerCase()
+    if (prov === 'icloud') {
+      return 'Connection to iCloud Mail timed out. Apple may be temporarily throttling connection attempts after repeated logins. Please wait a couple minutes and try again.'
+    }
+    return 'Connection to the mail server timed out. The server may be temporarily busy or throttling requests. Please wait a couple minutes and try again.'
   }
 
   if (isNetworkError(error)) {

@@ -44,6 +44,10 @@ describe('sync-errors', () => {
     assert.equal(isTimeoutError(timeoutErr), true)
     assert.match(getSyncErrorMessage(timeoutErr), /timed out/)
 
+    const connectTimeoutErr = new Error('Failed to establish connection in required time')
+    assert.equal(isTimeoutError(connectTimeoutErr), true)
+    assert.match(getSyncErrorMessage(connectTimeoutErr, 'icloud'), /throttling/i)
+
     const connRefused = new Error('connect ECONNREFUSED 127.0.0.1:993')
     assert.equal(isNetworkError(connRefused), true)
     assert.match(getSyncErrorMessage(connRefused), /Could not reach the mail server/)
