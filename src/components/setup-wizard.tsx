@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { encryptPassword } from '../lib/encryption'
 
 interface User {
@@ -8,6 +8,7 @@ interface User {
 }
 
 interface ExistingCredentials {
+  id?: string
   provider: string
   imapEmail: string
   lastSyncAt: number | null
@@ -324,6 +325,7 @@ export default function SetupWizard({ user, existingCredentials, onComplete, onC
           host: host || PROVIDERS[provider].host,
           port: port || PROVIDERS[provider].port,
           syncMode,
+          credentialId: existingCredentials?.id,
         }),
       })
 

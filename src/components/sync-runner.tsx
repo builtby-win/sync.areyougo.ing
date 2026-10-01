@@ -40,9 +40,19 @@ interface SyncStatus {
 const TICKET_KEYWORDS = ['ticket', 'order', 'confirmation', 'confirmed', 'booking']
 
 const KNOWN_PROVIDERS = [
-  'Ticketmaster', 'Eventbrite', 'AXS', 'StubHub', 'Vivid Seats',
-  'DICE', 'Front Gate Tickets', 'Tixr', 'See Tickets', 'TicketWeb',
-  'Luma', 'Resident Advisor', 'Skiddle',
+  'Ticketmaster',
+  'Eventbrite',
+  'AXS',
+  'StubHub',
+  'Vivid Seats',
+  'DICE',
+  'Front Gate Tickets',
+  'Tixr',
+  'See Tickets',
+  'TicketWeb',
+  'Luma',
+  'Resident Advisor',
+  'Skiddle',
 ]
 
 function toDateInputValue(date: Date): string {
@@ -57,8 +67,17 @@ const DATE_PRESETS = [
   { label: '5 years', days: 1825 },
 ] as const
 
-export default function SyncRunner({ user, credentialId, defaultLookbackDays = 30, redirectUrl, mainAppUrl, syncMode }: Props) {
-  const [stage, setStep] = useState<'configure' | 'fetching' | 'selecting' | 'ingesting' | 'completed' | 'error'>('configure')
+export default function SyncRunner({
+  user,
+  credentialId,
+  defaultLookbackDays = 30,
+  redirectUrl,
+  mainAppUrl,
+  syncMode,
+}: Props) {
+  const [stage, setStep] = useState<
+    'configure' | 'fetching' | 'selecting' | 'ingesting' | 'completed' | 'error'
+  >('configure')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [emails, setEmails] = useState<SyncEmail[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -67,7 +86,9 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
   const [lookbackDays, setLookbackDays] = useState(defaultLookbackDays)
   const [searchMode, setSearchMode] = useState<'default' | 'search'>('default')
   const [searchTerm, setSearchTerm] = useState('')
-  const [sinceDate, setSinceDate] = useState(() => toDateInputValue(new Date(Date.now() - defaultLookbackDays * 24 * 60 * 60 * 1000)))
+  const [sinceDate, setSinceDate] = useState(() =>
+    toDateInputValue(new Date(Date.now() - defaultLookbackDays * 24 * 60 * 60 * 1000)),
+  )
   const [beforeDate, setBeforeDate] = useState(() => toDateInputValue(new Date()))
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(false)
@@ -122,8 +143,10 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
             setStep('selecting')
             // Default select all pending emails if not already set
             if (selectedIds.size === 0 && data.emails.length > 0) {
-                const pendingIds = data.emails.filter(e => e.ingestStatus === 'pending').map(e => e.messageId)
-                setSelectedIds(new Set(pendingIds))
+              const pendingIds = data.emails
+                .filter((e) => e.ingestStatus === 'pending')
+                .map((e) => e.messageId)
+              setSelectedIds(new Set(pendingIds))
             }
           } else if (data.status === 'ingesting') {
             setStep('ingesting')
@@ -152,7 +175,7 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
   }
 
   const toggleAll = () => {
-    const pendingIds = emails.filter(e => e.ingestStatus === 'pending').map(e => e.messageId)
+    const pendingIds = emails.filter((e) => e.ingestStatus === 'pending').map((e) => e.messageId)
     if (selectedIds.size === pendingIds.length) {
       setSelectedIds(new Set())
     } else {
@@ -180,18 +203,22 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
 
   const handleComplete = (action: 'timeline' | 'audit') => {
     // 1. Try postMessage to close modal
-    notifySyncComplete(statusData?.totalFound || 0, statusData?.emails.filter(e => e.ingestStatus === 'success').length || 0, action)
-    
+    notifySyncComplete(
+      statusData?.totalFound || 0,
+      statusData?.emails.filter((e) => e.ingestStatus === 'success').length || 0,
+      action,
+    )
+
     // 2. Fallback: Force redirect parent window after short delay
     // This ensures navigation happens even if postMessage is blocked/ignored
     setTimeout(() => {
-        const targetPath = action === 'audit' ? '/settings/email-audit' : '/'
-        const targetUrl = `${mainAppUrl}${targetPath}`
-        try {
-            window.top!.location.href = targetUrl
-        } catch (e) {
-            console.error('Failed to redirect top window:', e)
-        }
+      const targetPath = action === 'audit' ? '/settings/email-audit' : '/'
+      const targetUrl = `${mainAppUrl}${targetPath}`
+      try {
+        window.top!.location.href = targetUrl
+      } catch (e) {
+        console.error('Failed to redirect top window:', e)
+      }
     }, 100)
   }
 
@@ -248,7 +275,15 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              Don't see your provider? Use <button type="button" onClick={() => setSearchMode('search')} className="text-primary hover:underline">Custom Search</button> to find emails from any sender.
+              Don't see your provider? Use{' '}
+              <button
+                type="button"
+                onClick={() => setSearchMode('search')}
+                className="text-primary hover:underline"
+              >
+                Custom Search
+              </button>{' '}
+              to find emails from any sender.
             </p>
           </div>
         ) : (
@@ -257,7 +292,9 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && canStart) startSync() }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && canStart) startSync()
+              }}
               placeholder="e.g. coachella, stubhub, united airlines"
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               maxLength={200}
@@ -330,18 +367,30 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
   }
 
   if (stage === 'fetching') {
-    const progressLabel = searchMode === 'search' && searchTerm
-      ? `Searching '${searchTerm}'...`
-      : statusData?.currentSender
-        ? `Scanning ${formatSenderName(statusData.currentSender)}`
-        : 'Connecting to your email...'
+    const progressLabel =
+      searchMode === 'search' && searchTerm
+        ? `Searching '${searchTerm}'...`
+        : statusData?.currentSender
+          ? `Scanning ${formatSenderName(statusData.currentSender)}`
+          : 'Connecting to your email...'
 
     return (
       <div className="flex flex-col items-center justify-center min-h-[50vh] space-y-4">
         <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
           <svg className="animate-spin w-8 h-8 text-primary" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            />
           </svg>
         </div>
         <div className="text-center">
@@ -356,13 +405,15 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
   }
 
   if (stage === 'selecting') {
-    const pendingEmails = emails.filter(e => e.ingestStatus === 'pending')
-    const skippedEmails = emails.filter(e => e.ingestStatus === 'skipped')
+    const pendingEmails = emails.filter((e) => e.ingestStatus === 'pending')
+    const skippedEmails = emails.filter((e) => e.ingestStatus === 'skipped')
 
     return (
       <div className="max-w-2xl mx-auto py-8 px-4">
         <h1 className="text-2xl font-bold mb-2">Review Tickets</h1>
-        <p className="text-muted-foreground mb-6">Select the emails you want to import to areyougo.ing</p>
+        <p className="text-muted-foreground mb-6">
+          Select the emails you want to import to areyougo.ing
+        </p>
 
         <div className="bg-card border border-border rounded-lg overflow-hidden">
           <div className="p-4 border-b border-border flex justify-between items-center bg-muted/30">
@@ -380,12 +431,12 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
 
           <div className="divide-y divide-border max-h-[60vh] overflow-y-auto">
             {pendingEmails.length === 0 && skippedEmails.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground">
-                    No ticket emails found in the last {lookbackDays} days.
-                </div>
+              <div className="p-8 text-center text-muted-foreground">
+                No ticket emails found in the last {lookbackDays} days.
+              </div>
             ) : (
               <>
-                {pendingEmails.map(email => {
+                {pendingEmails.map((email) => {
                   const isExpanded = expandedId === email.messageId
                   return (
                     <div key={email.messageId}>
@@ -409,8 +460,18 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
                           className="mt-0.5 p-1 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
                           title={isExpanded ? 'Collapse' : 'Preview email'}
                         >
-                          <svg className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          <svg
+                            className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M19 9l-7 7-7-7"
+                            />
                           </svg>
                         </button>
                       </div>
@@ -429,14 +490,24 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
                     <div className="p-3 bg-muted/50 text-xs font-medium text-muted-foreground">
                       Already imported ({skippedEmails.length})
                     </div>
-                    {skippedEmails.map(email => {
+                    {skippedEmails.map((email) => {
                       const isExpanded = expandedId === email.messageId
                       return (
                         <div key={email.messageId}>
                           <div className="flex items-start gap-3 p-4 opacity-50">
                             <div className="mt-1 w-4 h-4 flex items-center justify-center">
-                              <svg className="w-4 h-4 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              <svg
+                                className="w-4 h-4 text-success"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M5 13l4 4L19 7"
+                                />
                               </svg>
                             </div>
                             <div className="flex-1 min-w-0">
@@ -452,8 +523,18 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
                               className="mt-0.5 p-1 text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
                               title={isExpanded ? 'Collapse' : 'Preview email'}
                             >
-                              <svg className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              <svg
+                                className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M19 9l-7 7-7-7"
+                                />
                               </svg>
                             </button>
                           </div>
@@ -475,7 +556,10 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
         </div>
 
         <div className="flex gap-3 mt-6">
-          <a href="/" className="px-4 py-2 border border-border rounded-md font-medium hover:bg-secondary transition-colors text-center">
+          <a
+            href="/"
+            className="px-4 py-2 border border-border rounded-md font-medium hover:bg-secondary transition-colors text-center"
+          >
             Cancel
           </a>
           <button
@@ -491,8 +575,8 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
   }
 
   if (stage === 'ingesting' || stage === 'completed') {
-    const successCount = emails.filter(e => e.ingestStatus === 'success').length
-    const failCount = emails.filter(e => e.ingestStatus === 'failed').length
+    const successCount = emails.filter((e) => e.ingestStatus === 'success').length
+    const failCount = emails.filter((e) => e.ingestStatus === 'failed').length
     const completed = successCount + failCount
     const total = selectedIds.size
     const percentage = total > 0 ? Math.round((completed / total) * 100) : 0
@@ -503,138 +587,209 @@ export default function SyncRunner({ user, credentialId, defaultLookbackDays = 3
         <h2 className="text-2xl font-bold mb-6">
           {isDone ? 'Sync Complete' : 'Syncing Tickets...'}
         </h2>
-        
+
         <div className="w-full bg-secondary rounded-full h-4 mb-4 overflow-hidden">
-          <div 
+          <div
             className="bg-primary h-full transition-all duration-500 ease-out"
             style={{ width: `${percentage}%` }}
           />
         </div>
         <div className="mb-8">
-            <p className="text-muted-foreground">
-            {isDone 
-                ? `Successfully synced ${successCount} tickets${failCount > 0 ? `, ${failCount} failed` : ''}.`
-                : `${completed} of ${total} processed`}
+          <p className="text-muted-foreground">
+            {isDone
+              ? `Successfully synced ${successCount} tickets${failCount > 0 ? `, ${failCount} failed` : ''}.`
+              : `${completed} of ${total} processed`}
+          </p>
+          {isDone && successCount > 0 && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Your tickets are being processed and will appear in your timeline shortly.
             </p>
-            {isDone && successCount > 0 && (
-                <p className="text-xs text-muted-foreground mt-1">
-                    Your tickets are being processed and will appear in your timeline shortly.
-                </p>
-            )}
+          )}
         </div>
 
         <div className="bg-card border border-border rounded-lg p-4 text-left max-h-60 overflow-y-auto mb-8">
-            {emails.filter(e => selectedIds.has(e.messageId)).map(email => (
-                <div key={email.messageId} className="flex items-center justify-between py-2 text-sm border-b border-border/50 last:border-0">
-                    <span className="truncate flex-1 pr-4">{email.subject}</span>
-                    <div className="flex-shrink-0">
-                        {email.ingestStatus === 'pending' && <span className="text-muted-foreground">Pending</span>}
-                        {email.ingestStatus === 'sending' && <span className="text-primary animate-pulse font-medium">Syncing...</span>}
-                        {email.ingestStatus === 'success' && <span className="text-success font-medium flex items-center gap-1">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                            Received
-                        </span>}
-                        {email.ingestStatus === 'failed' && <span className="text-destructive font-medium">Failed</span>}
-                    </div>
+          {emails
+            .filter((e) => selectedIds.has(e.messageId))
+            .map((email) => (
+              <div
+                key={email.messageId}
+                className="flex items-center justify-between py-2 text-sm border-b border-border/50 last:border-0"
+              >
+                <span className="truncate flex-1 pr-4">{email.subject}</span>
+                <div className="flex-shrink-0">
+                  {email.ingestStatus === 'pending' && (
+                    <span className="text-muted-foreground">Pending</span>
+                  )}
+                  {email.ingestStatus === 'sending' && (
+                    <span className="text-primary animate-pulse font-medium">Syncing...</span>
+                  )}
+                  {email.ingestStatus === 'success' && (
+                    <span className="text-success font-medium flex items-center gap-1">
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                      Received
+                    </span>
+                  )}
+                  {email.ingestStatus === 'failed' && (
+                    <span className="text-destructive font-medium">Failed</span>
+                  )}
                 </div>
+              </div>
             ))}
         </div>
 
         {isDone && syncMode === 'manual' && !autoSyncEnabled && (
-            <div className="bg-card border border-border rounded-lg p-4 mb-6 flex items-center justify-between gap-4 text-left">
-                <p className="text-sm text-muted-foreground">Never miss a ticket — enable auto-sync to check for new emails daily.</p>
-                <button
-                    onClick={async () => {
-                        setEnablingAutoSync(true)
-                        try {
-                            const res = await fetch('/api/settings', {
-                                method: 'PATCH',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ credentialId, syncMode: 'auto_daily' }),
-                            })
-                            if (res.ok) setAutoSyncEnabled(true)
-                        } catch {}
-                        setEnablingAutoSync(false)
-                    }}
-                    disabled={enablingAutoSync}
-                    className="flex-shrink-0 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-                >
-                    {enablingAutoSync ? 'Enabling...' : 'Enable Auto-Sync'}
-                </button>
-            </div>
+          <div className="bg-card border border-border rounded-lg p-4 mb-6 flex items-center justify-between gap-4 text-left">
+            <p className="text-sm text-muted-foreground">
+              Never miss a ticket — enable auto-sync to check for new emails daily.
+            </p>
+            <button
+              onClick={async () => {
+                setEnablingAutoSync(true)
+                try {
+                  const res = await fetch('/api/settings', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ credentialId, syncMode: 'auto_daily' }),
+                  })
+                  if (res.ok) setAutoSyncEnabled(true)
+                } catch {
+                  // Ignore setting update failure
+                }
+                setEnablingAutoSync(false)
+              }}
+              disabled={enablingAutoSync}
+              className="flex-shrink-0 px-3 py-1.5 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {enablingAutoSync ? 'Enabling...' : 'Enable Auto-Sync'}
+            </button>
+          </div>
         )}
         {isDone && syncMode === 'manual' && autoSyncEnabled && (
-            <div className="bg-success/10 border border-success/20 rounded-lg p-4 mb-6 flex items-center gap-2 text-sm text-success font-medium">
-                <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                Auto-sync enabled
-            </div>
+          <div className="bg-success/10 border border-success/20 rounded-lg p-4 mb-6 flex items-center gap-2 text-sm text-success font-medium">
+            <svg
+              className="w-4 h-4 flex-shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+            Auto-sync enabled
+          </div>
         )}
 
         {isDone && (
-            <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {isEmbeddedMode ? (
-                    <>
-                    {failCount === 0 ? (
-                        <button
-                            onClick={() => handleComplete('timeline')}
-                            className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
-                        >
-                            Go to Timeline
-                        </button>
-                    ) : (
-                        <button
-                            onClick={() => handleComplete('audit')}
-                            className="w-full px-4 py-2 bg-destructive text-destructive-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
-                        >
-                            View Sync Issues
-                        </button>
-                    )}
-                    </>
+          <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {isEmbeddedMode ? (
+              <>
+                {failCount === 0 ? (
+                  <button
+                    onClick={() => handleComplete('timeline')}
+                    className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+                  >
+                    Go to Timeline
+                  </button>
                 ) : (
-                    <a 
-                        href={returnUrl}
-                        className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
-                    >
-                        Return to Dashboard
-                    </a>
+                  <button
+                    onClick={() => handleComplete('audit')}
+                    className="w-full px-4 py-2 bg-destructive text-destructive-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+                  >
+                    View Sync Issues
+                  </button>
                 )}
-                <a href="/" className="text-sm text-muted-foreground hover:underline mt-2">Sync another account</a>
-            </div>
+              </>
+            ) : (
+              <a
+                href={returnUrl}
+                className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity"
+              >
+                Return to Dashboard
+              </a>
+            )}
+            <a href="/" className="text-sm text-muted-foreground hover:underline mt-2">
+              Sync another account
+            </a>
+          </div>
         )}
       </div>
     )
   }
 
   if (stage === 'error') {
-    const needsReconnect = error?.startsWith('Your email credentials were rejected.') ?? false
+    const isAuthError =
+      error?.includes('rejected your credentials') ||
+      error?.includes('credentials were rejected') ||
+      error?.includes('App-Specific Password') ||
+      error?.includes('App Password') ||
+      error?.toLowerCase().includes('authentication')
 
     return (
       <div className="max-w-md mx-auto py-12 px-4 text-center">
         <div className="w-16 h-16 rounded-full bg-destructive/20 flex items-center justify-center mx-auto mb-6">
-          <span className="text-3xl">⚠️</span>
+          <svg
+            className="w-8 h-8 text-destructive"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+            />
+          </svg>
         </div>
         <h2 className="text-2xl font-bold mb-2 text-destructive">
-          {needsReconnect ? 'Reconnect your email account' : 'Sync Failed'}
+          {isAuthError ? 'Email Password Rejected' : 'Sync Failed'}
         </h2>
-        <p className="text-muted-foreground mb-3">{error}</p>
-        {needsReconnect && (
-          <p className="text-sm text-muted-foreground mb-8">
-            Remove this account from the connected accounts page, then add it again with a new app
-            password.
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 mb-4 text-left text-sm text-foreground">
+          <p className="font-semibold text-destructive mb-1">
+            {isAuthError ? 'Authentication Required' : 'Error Details'}
+          </p>
+          <p className="text-muted-foreground text-xs leading-relaxed">{error}</p>
+        </div>
+        {isAuthError && (
+          <p className="text-sm text-muted-foreground mb-6">
+            You can update your app password directly in Connected Accounts without losing your
+            settings.
           </p>
         )}
-        <a
-          href="/"
-          className={`px-4 py-2 rounded-md font-medium hover:opacity-90 ${
-            needsReconnect
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-secondary text-secondary-foreground'
-          }`}
-        >
-          {needsReconnect ? 'Manage connected accounts' : 'Go Back'}
-        </a>
+        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+          <a
+            href="/"
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md font-medium hover:opacity-90 transition-opacity text-center text-sm"
+          >
+            Manage Connected Accounts
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              setStep('configure')
+              setError(null)
+            }}
+            className="px-4 py-2 bg-secondary text-secondary-foreground rounded-md font-medium hover:bg-secondary/80 transition-colors text-center text-sm"
+          >
+            Try Again
+          </button>
+        </div>
       </div>
     )
   }

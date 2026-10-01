@@ -1,11 +1,11 @@
 ---
-import BaseLayout from '../layouts/base-layout.astro'
-import SetupWizard from '../components/setup-wizard'
+import { desc, eq } from 'drizzle-orm'
 import AccountsList from '../components/accounts-list'
-import { verifySession } from '../lib/verify-session'
+import SetupWizard from '../components/setup-wizard'
+import BaseLayout from '../layouts/base-layout.astro'
 import { getDb } from '../lib/db'
-import { imapCredentials } from '../lib/schema'
-import { eq } from 'drizzle-orm'
+import { imapCredentials, syncHistory } from '../lib/schema'
+import { verifySession } from '../lib/verify-session'
 
 // Get environment and verify session
 const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
@@ -58,18 +58,25 @@ let existingCredentials: Array<{
   id: string
   provider: string
   imapEmail: string
+  host: string
+  port: number
   lastSyncAt: Date | null
   syncMode: string
   lastManualSyncAt: Date | null
+  lastSyncStatus: string | null
+  lastSyncError: string | null
+  lastSyncCompletedAt: Date | null
 }> = []
 
 if (user) {
   const db = getDb()
-  existingCredentials = await db
+  const creds = await db
     .select({
       id: imapCredentials.id,
       provider: imapCredentials.provider,
       imapEmail: imapCredentials.imapEmail,
+      host: imapCredentials.host,
+      port: imapCredentials.port,
       lastSyncAt: imapCredentials.lastSyncAt,
       syncMode: imapCredentials.syncMode,
       lastManualSyncAt: imapCredentials.lastManualSyncAt,
@@ -77,6 +84,42 @@ if (user) {
     .from(imapCredentials)
     .where(eq(imapCredentials.userId, user.id))
     .orderBy(imapCredentials.createdAt)
+
+  // Fetch recent sync history to surface any failure or status
+  const historyRecords = await db
+    .select({
+      credentialId: syncHistory.credentialId,
+      status: syncHistory.status,
+      errorMessage: syncHistory.errorMessage,
+      completedAt: syncHistory.completedAt,
+    })
+    .from(syncHistory)
+    .where(eq(syncHistory.userId, user.id))
+    .orderBy(desc(syncHistory.startedAt))
+
+  const latestHistoryByCred = new Map<
+    string,
+    { status: string; errorMessage: string | null; completedAt: Date | null }
+  >()
+  for (const h of historyRecords) {
+    if (h.credentialId && !latestHistoryByCred.has(h.credentialId)) {
+      latestHistoryByCred.set(h.credentialId, {
+        status: h.status,
+        errorMessage: h.errorMessage,
+        completedAt: h.completedAt,
+      })
+    }
+  }
+
+  existingCredentials = creds.map((cred) => {
+    const hist = latestHistoryByCred.get(cred.id)
+    return {
+      ...cred,
+      lastSyncStatus: hist?.status ?? null,
+      lastSyncError: hist?.errorMessage ?? null,
+      lastSyncCompletedAt: hist?.completedAt ?? null,
+    }
+  })
 }
 
 // Convert Date to timestamp for client components
@@ -84,10 +127,17 @@ const accountsForClient = existingCredentials.map((cred) => ({
   id: cred.id,
   provider: cred.provider,
   imapEmail: cred.imapEmail,
+  host: cred.host,
+  port: cred.port,
   lastSyncAt: cred.lastSyncAt?.getTime() ? Math.floor(cred.lastSyncAt.getTime() / 1000) : null,
   syncMode: cred.syncMode,
   lastManualSyncAt: cred.lastManualSyncAt?.getTime()
     ? Math.floor(cred.lastManualSyncAt.getTime() / 1000)
+    : null,
+  lastSyncStatus: cred.lastSyncStatus,
+  lastSyncError: cred.lastSyncError,
+  lastSyncCompletedAt: cred.lastSyncCompletedAt?.getTime()
+    ? Math.floor(cred.lastSyncCompletedAt.getTime() / 1000)
     : null,
 }))
 

@@ -3,8 +3,8 @@
  * Replaces the cloudflare:sockets implementation which had TLS drop issues.
  */
 
-import { ImapFlow } from 'imapflow'
 import { convert } from 'html-to-text'
+import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { APPROVED_SENDERS, isApprovedSender } from './approved-senders'
 import { TICKET_KEYWORDS } from './email-filter'
@@ -203,7 +203,9 @@ export async function fetchSampleEmails(
         const mailbox = client.mailbox
         if (!mailbox || mailbox.exists === 0) continue
 
-        console.log(`[imap-client] Found ${mailbox.exists} messages in ${mailboxPath}, fetching last 100...`)
+        console.log(
+          `[imap-client] Found ${mailbox.exists} messages in ${mailboxPath}, fetching last 100...`,
+        )
 
         const startSeq = Math.max(1, mailbox.exists - 99)
         const range = `${startSeq}:*`
@@ -332,15 +334,17 @@ export async function fetchTicketEmails(
           let resultArray: number[]
           if (Array.isArray(results)) {
             resultArray = results
-          } else if ((results as any) instanceof Set) {
-            resultArray = Array.from(results as unknown as Set<number>)
+          } else if ((results as unknown) instanceof Set) {
+            resultArray = Array.from(results as Set<number>)
           } else {
             continue
           }
 
           if (resultArray.length === 0) continue
 
-          console.log(`[imap-client] Found ${resultArray.length} emails from ${sender} in ${mailboxPath}`)
+          console.log(
+            `[imap-client] Found ${resultArray.length} emails from ${sender} in ${mailboxPath}`,
+          )
 
           const uidsToFetch = resultArray.slice(0, 10)
 
@@ -390,7 +394,10 @@ export async function fetchTicketEmails(
             senderEmails.push(email)
           }
         } catch (searchError) {
-          console.error(`[imap-client] Error searching for ${sender} in ${mailboxPath}:`, searchError)
+          console.error(
+            `[imap-client] Error searching for ${sender} in ${mailboxPath}:`,
+            searchError,
+          )
         } finally {
           lock.release()
         }
@@ -479,15 +486,17 @@ export async function searchEmailsByQuery(
         let resultArray: number[]
         if (Array.isArray(results)) {
           resultArray = results
-        } else if ((results as any) instanceof Set) {
-          resultArray = Array.from(results as unknown as Set<number>)
+        } else if ((results as unknown) instanceof Set) {
+          resultArray = Array.from(results as Set<number>)
         } else {
           continue
         }
 
         if (resultArray.length === 0) continue
 
-        console.log(`[imap-client] Found ${resultArray.length} emails matching "${searchTerm}" in ${mailboxPath}`)
+        console.log(
+          `[imap-client] Found ${resultArray.length} emails matching "${searchTerm}" in ${mailboxPath}`,
+        )
 
         // Limit to 50 results
         const uidsToFetch = resultArray.slice(0, 50)
@@ -536,7 +545,10 @@ export async function searchEmailsByQuery(
           })
         }
       } catch (searchError) {
-        console.error(`[imap-client] Error searching for query "${searchTerm}" in ${mailboxPath}:`, searchError)
+        console.error(
+          `[imap-client] Error searching for query "${searchTerm}" in ${mailboxPath}:`,
+          searchError,
+        )
       } finally {
         lock.release()
       }
@@ -552,9 +564,7 @@ export async function searchEmailsByQuery(
     emails.length = 0
     emails.push(...filtered)
 
-    console.log(
-      `[imap-client] After ticket keyword filter: ${filtered.length} emails remain`,
-    )
+    console.log(`[imap-client] After ticket keyword filter: ${filtered.length} emails remain`)
 
     progress?.onSenderComplete(searchTerm, filtered)
   } catch (error) {

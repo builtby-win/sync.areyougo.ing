@@ -2,11 +2,13 @@ import type { APIRoute } from 'astro'
 import { and, eq } from 'drizzle-orm'
 import { APPROVED_SENDERS } from '../../lib/approved-senders'
 import { getDb } from '../../lib/db'
+import { checkAlreadyIngested, computeEmailHash } from '../../lib/dedup'
 import { shouldProcessEmail } from '../../lib/email-filter'
 import { fetchTicketEmails, searchEmailsByQuery } from '../../lib/imap-client'
 import { runIngestion } from '../../lib/ingest'
 import { redactPii } from '../../lib/redaction/redactor'
 import { imapCredentials, syncHistory } from '../../lib/schema'
+import { getSyncErrorMessage } from '../../lib/sync-errors'
 import {
   addEmailToSession,
   cleanupSessions,
@@ -18,9 +20,7 @@ import {
   updateEmailStatus,
   updateSession,
 } from '../../lib/sync-sessions'
-import { getSyncErrorMessage } from '../../lib/sync-errors'
 import { verifySession } from '../../lib/verify-session'
-import { checkAlreadyIngested, computeEmailHash } from '../../lib/dedup'
 
 interface SyncRequest {
   credentialId: string
@@ -67,6 +67,7 @@ async function processSync(
     id: string
     userId: string
     userEmail: string
+    provider: string
     host: string
     port: number
     imapEmail: string
@@ -102,7 +103,7 @@ async function processSync(
       },
       onConnectionError: (error: Error) => {
         console.error(`[sync:${sessionId}] Connection error:`, error)
-        updateConnectionState(sessionId, 'error', getSyncErrorMessage(error))
+        updateConnectionState(sessionId, 'error', getSyncErrorMessage(error, cred.provider))
       },
       onSenderStart: (sender: string) => {
         console.log(`[sync:${sessionId}] Searching ${sender}...`)
@@ -218,12 +219,30 @@ async function processSync(
     })
   } catch (error) {
     console.error(`[sync:${sessionId}] Error:`, error)
-    const errorMessage = getSyncErrorMessage(error)
+    const errorMessage = getSyncErrorMessage(error, cred.provider)
     updateSession(sessionId, {
       status: 'failed',
       error: errorMessage,
       completedAt: new Date(),
     })
+
+    // Log failure to syncHistory so the error status is preserved for the account
+    try {
+      await db.insert(syncHistory).values({
+        id: crypto.randomUUID(),
+        userId: cred.userId,
+        credentialId: cred.id,
+        status: 'error',
+        emailsFound: 0,
+        emailsIngested: 0,
+        errorMessage,
+        startedAt: new Date(),
+        completedAt: new Date(),
+      })
+    } catch (dbErr) {
+      console.error(`[sync:${sessionId}] Failed to record syncHistory error:`, dbErr)
+    }
+
     throw error
   }
 }
@@ -258,7 +277,15 @@ export const POST: APIRoute = async ({ request }) => {
 
     // Parse request body
     const body = (await request.json()) as SyncRequest
-    const { credentialId, lookbackDays, dryRun, waitForSelection, searchTerm: rawSearchTerm, sinceDate, beforeDate } = body
+    const {
+      credentialId,
+      lookbackDays,
+      dryRun,
+      waitForSelection,
+      searchTerm: rawSearchTerm,
+      sinceDate,
+      beforeDate,
+    } = body
 
     if (!credentialId) {
       return new Response(JSON.stringify({ success: false, error: 'credentialId is required' }), {
@@ -278,16 +305,22 @@ export const POST: APIRoute = async ({ request }) => {
     let searchTerm: string | undefined
     if (rawSearchTerm !== undefined) {
       if (typeof rawSearchTerm !== 'string' || rawSearchTerm.trim().length === 0) {
-        return new Response(JSON.stringify({ success: false, error: 'searchTerm must be a non-empty string' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        })
+        return new Response(
+          JSON.stringify({ success: false, error: 'searchTerm must be a non-empty string' }),
+          {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        )
       }
       if (rawSearchTerm.length > 200) {
-        return new Response(JSON.stringify({ success: false, error: 'searchTerm must be 200 characters or less' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        })
+        return new Response(
+          JSON.stringify({ success: false, error: 'searchTerm must be 200 characters or less' }),
+          {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        )
       }
       searchTerm = rawSearchTerm.trim()
     }
@@ -349,8 +382,17 @@ export const POST: APIRoute = async ({ request }) => {
         lastSyncAt: cred.lastSyncAt,
       }
       const emails = searchTerm
-        ? await searchEmailsByQuery(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate, searchTerm })
-        : await fetchTicketEmails(dryRunCredentials, encryptionKey, { lookbackDays, sinceDate, beforeDate })
+        ? await searchEmailsByQuery(dryRunCredentials, encryptionKey, {
+            lookbackDays,
+            sinceDate,
+            beforeDate,
+            searchTerm,
+          })
+        : await fetchTicketEmails(dryRunCredentials, encryptionKey, {
+            lookbackDays,
+            sinceDate,
+            beforeDate,
+          })
 
       const emailsForIngest: EmailForIngest[] = emails.map((email) => ({
         messageId: email.messageId,
@@ -389,13 +431,12 @@ export const POST: APIRoute = async ({ request }) => {
       beforeDate,
     ).catch((err) => {
       console.error(`[sync:${sessionId}] Async sync error:`, err)
-        updateSession(sessionId, {
-          status: 'failed',
-          error: getSyncErrorMessage(err),
-          completedAt: new Date(),
-        })
-      },
-    )
+      updateSession(sessionId, {
+        status: 'failed',
+        error: getSyncErrorMessage(err, cred.provider),
+        completedAt: new Date(),
+      })
+    })
 
     // Return immediately with sessionId for polling
     return new Response(

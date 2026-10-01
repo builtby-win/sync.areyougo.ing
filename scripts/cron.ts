@@ -5,12 +5,13 @@
 
 import { eq } from 'drizzle-orm'
 import cron from 'node-cron'
-import { checkAlreadyIngested, computeEmailHash } from '../src/lib/dedup'
 import { getDb } from '../src/lib/db'
+import { checkAlreadyIngested, computeEmailHash } from '../src/lib/dedup'
 import { shouldProcessEmail } from '../src/lib/email-filter'
-import { buildIngestPayload } from '../src/lib/ingest'
 import { fetchTicketEmails } from '../src/lib/imap-client'
+import { buildIngestPayload } from '../src/lib/ingest'
 import { imapCredentials, syncHistory } from '../src/lib/schema'
+import { getSyncErrorMessage } from '../src/lib/sync-errors'
 
 const CRON_SCHEDULE = process.env.CRON_SCHEDULE || '0 6 * * *' // Daily at 6am UTC
 
@@ -81,7 +82,9 @@ async function runSync(): Promise<void> {
       )
 
       if (existingHashes.size > 0) {
-        console.log(`[cron] Dedup: ${existingHashes.size} emails already imported for ${cred.imapEmail}`)
+        console.log(
+          `[cron] Dedup: ${existingHashes.size} emails already imported for ${cred.imapEmail}`,
+        )
       }
 
       let ingestedCount = 0
@@ -158,7 +161,7 @@ async function runSync(): Promise<void> {
         status: 'error',
         emailsFound: 0,
         emailsIngested: 0,
-        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        errorMessage: getSyncErrorMessage(error, cred.provider),
         startedAt,
         completedAt: new Date(),
       })

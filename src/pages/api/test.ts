@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro'
 import { APPROVED_SENDERS } from '../../lib/approved-senders'
 import { fetchTicketEmails } from '../../lib/imap-client'
+import { getSyncErrorMessage } from '../../lib/sync-errors'
 import {
   addEmailToSession,
   cleanupSessions,
@@ -39,6 +40,7 @@ async function processTest(
   password: string,
   host: string,
   port: number,
+  provider?: string,
 ) {
   try {
     // Fetch emails from approved senders with progress callbacks (no ingest)
@@ -68,7 +70,7 @@ async function processTest(
         },
         onConnectionError: (error) => {
           console.error(`[test:${sessionId}] Connection error:`, error)
-          updateConnectionState(sessionId, 'error', error.message)
+          updateConnectionState(sessionId, 'error', getSyncErrorMessage(error, provider))
         },
         onSenderStart: (sender) => {
           console.log(`[test:${sessionId}] Searching ${sender}...`)
@@ -111,7 +113,7 @@ async function processTest(
     console.error(`[test:${sessionId}] Error:`, error)
     updateSession(sessionId, {
       status: 'failed',
-      error: error instanceof Error ? error.message : 'Connection test failed',
+      error: getSyncErrorMessage(error, provider),
       completedAt: new Date(),
     })
     throw error
@@ -155,11 +157,11 @@ export const POST: APIRoute = async ({ request }) => {
     const sessionId = createSession(user.id, 'test', APPROVED_SENDERS.length)
 
     // Start async processing (don't await)
-    processTest(sessionId, email, password, host, port).catch((err) => {
+    processTest(sessionId, email, password, host, port, provider).catch((err) => {
       console.error(`[test:${sessionId}] Async test error:`, err)
       updateSession(sessionId, {
         status: 'failed',
-        error: err instanceof Error ? err.message : 'Connection test failed',
+        error: getSyncErrorMessage(err, provider),
         completedAt: new Date(),
       })
     })
@@ -179,7 +181,7 @@ export const POST: APIRoute = async ({ request }) => {
     return new Response(
       JSON.stringify({
         success: false,
-        error: error instanceof Error ? error.message : 'Connection test failed',
+        error: getSyncErrorMessage(error),
       } satisfies TestResponse),
       {
         status: 500,
