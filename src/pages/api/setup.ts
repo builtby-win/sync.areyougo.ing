@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro'
 import { and, eq, sql } from 'drizzle-orm'
 import { getDb } from '../../lib/db'
-import { imapCredentials } from '../../lib/schema'
+import { imapCredentials, syncHistory } from '../../lib/schema'
 import { verifySession } from '../../lib/verify-session'
 
 const MAX_ACCOUNTS = 5
@@ -82,6 +82,15 @@ export const POST: APIRoute = async ({ request }) => {
           status: 404,
           headers: { 'Content-Type': 'application/json' },
         })
+      }
+
+      // Clear any prior failed sync history for this credential so the status becomes clean
+      try {
+        await db
+          .delete(syncHistory)
+          .where(and(eq(syncHistory.credentialId, credentialId), eq(syncHistory.status, 'error')))
+      } catch (e) {
+        console.error('[setup] Failed to clear error history:', e)
       }
 
       console.log('[setup] Success (update):', { elapsed: Date.now() - startTime })

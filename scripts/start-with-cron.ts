@@ -9,6 +9,15 @@ import { startCronJobs } from './cron'
 process.env.HOST = process.env.HOST || '0.0.0.0'
 process.env.PORT = process.env.PORT || '4321'
 
+// Prevent unhandled errors or socket timeouts from crashing the supervisor process
+process.on('uncaughtException', (error) => {
+  console.error('[server] Uncaught Exception caught by supervisor:', error)
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[server] Unhandled Rejection caught by supervisor at:', promise, 'reason:', reason)
+})
+
 // Start cron jobs
 startCronJobs()
 

@@ -1,7 +1,7 @@
 import { useState } from 'react'
+import { buildReturnUrl } from '../lib/redirect'
 import AccountCard from './account-card'
 import SetupWizard from './setup-wizard'
-import { buildReturnUrl } from '../lib/redirect'
 
 interface User {
   id: string
@@ -13,9 +13,14 @@ interface AccountCredential {
   id: string
   provider: string
   imapEmail: string
+  host?: string
+  port?: number
   lastSyncAt: number | null
   syncMode: string
   lastManualSyncAt: number | null
+  lastSyncStatus?: string | null
+  lastSyncError?: string | null
+  lastSyncCompletedAt?: number | null
 }
 
 interface Props {
@@ -27,7 +32,12 @@ interface Props {
 
 const MAX_ACCOUNTS = 5
 
-export default function AccountsList({ user, accounts, redirectUrl, mainAppUrl = 'https://areyougo.ing' }: Props) {
+export default function AccountsList({
+  user,
+  accounts,
+  redirectUrl,
+  mainAppUrl = 'https://areyougo.ing',
+}: Props) {
   const handleUpdate = () => {
     window.location.reload()
   }
@@ -118,10 +128,7 @@ export default function AccountsList({ user, accounts, redirectUrl, mainAppUrl =
 
       {/* Dashboard link */}
       <div className="pt-4 border-t border-border text-center">
-        <a
-          href={returnUrl}
-          className="text-sm text-primary hover:underline"
-        >
+        <a href={returnUrl} className="text-sm text-primary hover:underline">
           {returnLabel}
         </a>
       </div>

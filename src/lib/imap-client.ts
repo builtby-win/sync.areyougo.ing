@@ -3,8 +3,8 @@
  * Replaces the cloudflare:sockets implementation which had TLS drop issues.
  */
 
-import { ImapFlow } from 'imapflow'
 import { convert } from 'html-to-text'
+import { ImapFlow } from 'imapflow'
 import { simpleParser } from 'mailparser'
 import { APPROVED_SENDERS, isApprovedSender } from './approved-senders'
 import { TICKET_KEYWORDS } from './email-filter'
@@ -61,10 +61,53 @@ export interface EmailPreview {
 }
 
 /**
+ * Safely logout and destroy the client socket to prevent lingering timers or unhandled errors.
+ */
+async function safelyCloseClient(client: ImapFlow): Promise<void> {
+  try {
+    if (client.usable) {
+      await client.logout()
+    } else {
+      client.close()
+    }
+  } catch {
+    try {
+      client.close()
+    } catch {
+      // Ignore
+    }
+  }
+}
+
+/**
+ * Discover mailboxes to scan for tickets. Always includes INBOX.
+ * Also includes Archive if present (critical for iCloud and swipe-to-archive users).
+ */
+async function getMailboxesToScan(client: ImapFlow): Promise<string[]> {
+  const mailboxesToScan: string[] = ['INBOX']
+  try {
+    const list = await client.list()
+    for (const mb of list) {
+      const isArchive =
+        mb.specialUse === '\\Archive' ||
+        mb.name.toLowerCase() === 'archive' ||
+        mb.path.toLowerCase() === 'archive' ||
+        mb.path.toLowerCase() === 'archives'
+      if (isArchive && !mailboxesToScan.includes(mb.path)) {
+        mailboxesToScan.push(mb.path)
+      }
+    }
+  } catch (err) {
+    console.warn('[imap-client] Failed to list mailboxes, defaulting to INBOX:', err)
+  }
+  return mailboxesToScan
+}
+
+/**
  * Create an ImapFlow client with the given credentials
  */
 function createClient(host: string, port: number, email: string, password: string): ImapFlow {
-  return new ImapFlow({
+  const client = new ImapFlow({
     host,
     port,
     secure: port === 993, // Use TLS for port 993
@@ -72,6 +115,8 @@ function createClient(host: string, port: number, email: string, password: strin
       user: email,
       pass: password,
     },
+    connectionTimeout: 20000,
+    greetingTimeout: 15000,
     // Enable logging to debug iCloud IMAP issues
     logger: {
       debug: (msg: unknown) => console.log('[imapflow:debug]', msg),
@@ -80,6 +125,14 @@ function createClient(host: string, port: number, email: string, password: strin
       error: (msg: unknown) => console.error('[imapflow:error]', msg),
     },
   })
+
+  // Prevent unhandled 'error' events on the EventEmitter from terminating Node.js
+  client.on('error', (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn(`[imapflow:handled-error] Background client error for ${email}:`, message)
+  })
+
+  return client
 }
 
 /**
@@ -100,7 +153,6 @@ export async function testConnection(
   try {
     await client.connect()
     console.log('[imap-client] Connection successful')
-    await client.logout()
     return { success: true }
   } catch (error) {
     console.error('[imap-client] Connection failed:', error)
@@ -108,6 +160,8 @@ export async function testConnection(
       success: false,
       error: error instanceof Error ? error.message : 'Connection failed',
     }
+  } finally {
+    await safelyCloseClient(client)
   }
 }
 
@@ -132,47 +186,53 @@ export async function fetchSampleEmails(
 
   try {
     await client.connect()
-    console.log('[imap-client] Connected, selecting INBOX...')
+    console.log('[imap-client] Connected, selecting mailboxes...')
 
-    const lock = await client.getMailboxLock('INBOX')
+    const mailboxesToScan = await getMailboxesToScan(client)
     const emails: EmailPreview[] = []
 
-    try {
-      // Get mailbox status
-      const mailbox = client.mailbox
-      if (!mailbox || mailbox.exists === 0) {
-        console.log('[imap-client] Mailbox empty')
-        return { success: true, emails: [] }
+    for (const mailboxPath of mailboxesToScan) {
+      if (emails.length >= maxEmails) break
+      let lock
+      try {
+        lock = await client.getMailboxLock(mailboxPath)
+      } catch (lockError) {
+        console.warn(`[imap-client] Could not lock mailbox "${mailboxPath}":`, lockError)
+        continue
       }
 
-      console.log(`[imap-client] Found ${mailbox.exists} messages, fetching last 100...`)
+      try {
+        const mailbox = client.mailbox
+        if (!mailbox || mailbox.exists === 0) continue
 
-      // Fetch last 100 messages (or all if fewer)
-      const startSeq = Math.max(1, mailbox.exists - 99)
-      const range = `${startSeq}:*`
+        console.log(
+          `[imap-client] Found ${mailbox.exists} messages in ${mailboxPath}, fetching last 100...`,
+        )
 
-      for await (const msg of client.fetch(range, { envelope: true })) {
-        if (!msg.envelope) continue
-        const fromAddress = msg.envelope.from?.[0]?.address || ''
+        const startSeq = Math.max(1, mailbox.exists - 99)
+        const range = `${startSeq}:*`
 
-        if (isApprovedSender(fromAddress)) {
-          const fromName = msg.envelope.from?.[0]?.name || ''
-          emails.push({
-            from: fromName ? `${fromName} <${fromAddress}>` : fromAddress,
-            subject: msg.envelope.subject || '(no subject)',
-            date: msg.envelope.date?.toISOString() || new Date().toISOString(),
-          })
+        for await (const msg of client.fetch(range, { envelope: true })) {
+          if (!msg.envelope) continue
+          const fromAddress = msg.envelope.from?.[0]?.address || ''
 
-          if (emails.length >= maxEmails) break
+          if (isApprovedSender(fromAddress)) {
+            const fromName = msg.envelope.from?.[0]?.name || ''
+            emails.push({
+              from: fromName ? `${fromName} <${fromAddress}>` : fromAddress,
+              subject: msg.envelope.subject || '(no subject)',
+              date: msg.envelope.date?.toISOString() || new Date().toISOString(),
+            })
+
+            if (emails.length >= maxEmails) break
+          }
         }
+      } finally {
+        lock.release()
       }
-
-      console.log(`[imap-client] Found ${emails.length} emails from approved senders`)
-    } finally {
-      lock.release()
     }
 
-    await client.logout()
+    console.log(`[imap-client] Found ${emails.length} emails from approved senders`)
     return { success: true, emails }
   } catch (error) {
     console.error('[imap-client] Error fetching sample emails:', error)
@@ -180,6 +240,8 @@ export async function fetchSampleEmails(
       success: false,
       error: error instanceof Error ? error.message : 'Connection failed',
     }
+  } finally {
+    await safelyCloseClient(client)
   }
 }
 
@@ -207,6 +269,7 @@ export async function fetchTicketEmails(
   const client = createClient(credentials.host, credentials.port, credentials.email, password)
 
   const emails: Email[] = []
+  const seenMessageIds = new Set<string>()
 
   try {
     // Signal connection progress
@@ -221,39 +284,45 @@ export async function fetchTicketEmails(
     progress?.onConnected?.()
     console.log('[imap-client] Connected')
 
-    const lock = await client.getMailboxLock('INBOX')
+    const mailboxesToScan = await getMailboxesToScan(client)
+    console.log(`[imap-client] Mailboxes to scan: ${mailboxesToScan.join(', ')}`)
 
-    try {
-      // Calculate date range
-      let sinceDate: Date
-      if (options?.sinceDate) {
-        sinceDate = new Date(options.sinceDate)
-        console.log(`[imap-client] Using explicit sinceDate: ${sinceDate.toISOString()}`)
-      } else if (options?.lookbackDays) {
-        sinceDate = new Date(Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000)
-        console.log(`[imap-client] Using lookback of ${options.lookbackDays} days`)
-      } else if (credentials.lastSyncAt) {
-        sinceDate = credentials.lastSyncAt
-        console.log(`[imap-client] Using lastSyncAt: ${sinceDate.toISOString()}`)
-      } else {
-        sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // Default: last 30 days
-        console.log('[imap-client] Using default 30 day lookback')
-      }
+    // Calculate date range
+    let sinceDate: Date
+    if (options?.sinceDate) {
+      sinceDate = new Date(options.sinceDate)
+      console.log(`[imap-client] Using explicit sinceDate: ${sinceDate.toISOString()}`)
+    } else if (options?.lookbackDays) {
+      sinceDate = new Date(Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000)
+      console.log(`[imap-client] Using lookback of ${options.lookbackDays} days`)
+    } else if (credentials.lastSyncAt) {
+      sinceDate = credentials.lastSyncAt
+      console.log(`[imap-client] Using lastSyncAt: ${sinceDate.toISOString()}`)
+    } else {
+      sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) // Default: last 30 days
+      console.log('[imap-client] Using default 30 day lookback')
+    }
 
-      const beforeDate = options?.beforeDate ? new Date(options.beforeDate) : undefined
-      if (beforeDate) {
-        console.log(`[imap-client] Using explicit beforeDate: ${beforeDate.toISOString()}`)
-      }
+    const beforeDate = options?.beforeDate ? new Date(options.beforeDate) : undefined
+    if (beforeDate) {
+      console.log(`[imap-client] Using explicit beforeDate: ${beforeDate.toISOString()}`)
+    }
 
-      // Search for emails from each approved sender
-      for (const sender of APPROVED_SENDERS) {
-        // IMAP FROM search matches if the string appears anywhere in the FROM field
-        // So 'ticketmaster' will match @ticketmaster.com, @email.ticketmaster.com, etc.
-        console.log(`[imap-client] Searching for emails from ${sender}...`)
-        progress?.onSenderStart(sender)
+    // Search for emails from each approved sender across all candidate mailboxes
+    for (const sender of APPROVED_SENDERS) {
+      console.log(`[imap-client] Searching for emails from ${sender}...`)
+      progress?.onSenderStart(sender)
 
-        // Track emails found for this sender (for progress callback)
-        const senderEmails: Email[] = []
+      const senderEmails: Email[] = []
+
+      for (const mailboxPath of mailboxesToScan) {
+        let lock
+        try {
+          lock = await client.getMailboxLock(mailboxPath)
+        } catch (lockError) {
+          console.warn(`[imap-client] Could not lock mailbox "${mailboxPath}":`, lockError)
+          continue
+        }
 
         try {
           const results = await client.search({
@@ -262,77 +331,46 @@ export async function fetchTicketEmails(
             ...(beforeDate && { before: beforeDate }),
           })
 
-          // Debug logging to understand what iCloud returns
-          console.log(`[imap-client] Raw search results for ${sender}:`, {
-            type: typeof results,
-            isArray: Array.isArray(results),
-            isSet: results instanceof Set,
-            isFalsy: !results,
-            constructorName: results?.constructor?.name,
-            value: results,
-          })
+          if (!results) continue
 
-          // Handle all possible return values from imapflow search
-          // - Array<number>: normal success case
-          // - false: error or not in SELECTED state
-          // - undefined: no mailbox selected
-          if (!results) {
-            console.log(`[imap-client] No results for ${sender} (returned ${results})`)
-            progress?.onSenderComplete(sender, [])
-            continue
-          }
-
-          // Convert to array - imapflow returns Array, but handle Set for safety
           let resultArray: number[]
           if (Array.isArray(results)) {
             resultArray = results
-          } else if ((results as any) instanceof Set) {
-            resultArray = Array.from(results as unknown as Set<number>)
+          } else if ((results as unknown) instanceof Set) {
+            resultArray = Array.from(results as Set<number>)
           } else {
-            console.warn(
-              `[imap-client] Unexpected search result type for ${sender}:`,
-              typeof results,
-              results,
-            )
-            progress?.onSenderComplete(sender, [])
             continue
           }
 
-          if (resultArray.length === 0) {
-            progress?.onSenderComplete(sender, [])
-            continue
-          }
+          if (resultArray.length === 0) continue
 
-          console.log(`[imap-client] Found ${resultArray.length} emails from ${sender}`)
+          console.log(
+            `[imap-client] Found ${resultArray.length} emails from ${sender} in ${mailboxPath}`,
+          )
 
-          // Limit to 10 per sender
           const uidsToFetch = resultArray.slice(0, 10)
 
           for await (const msg of client.fetch(uidsToFetch, {
             envelope: true,
-            source: true, // Fetch full message source for body extraction
+            source: true,
           })) {
             if (!msg.envelope) continue
             const from = msg.envelope.from?.[0]
             const fromAddress = from?.address || ''
             const fromName = from?.name || ''
 
-            // Extract plaintext body using mailparser
             let body = ''
             if (msg.source) {
               const parsed = await simpleParser(msg.source)
               const text = parsed.text || ''
               const html = parsed.html || ''
 
-              // Some providers (like Ticketmaster) send a "text/plain" part that is just a single word
-              // or very short, while the real content is in the HTML part.
-              // If text is suspiciously short (< 100 chars) and we have HTML, prefer the HTML-to-text conversion.
               if (text.length < 100 && html.length > 0) {
                 body = convert(html, {
                   wordwrap: 130,
                   selectors: [
                     { selector: 'a', options: { hideLinkHrefIfSameAsText: true } },
-                    { selector: 'img', format: 'skip' }, // Skip images to reduce noise
+                    { selector: 'img', format: 'skip' },
                   ],
                 })
               } else {
@@ -340,13 +378,15 @@ export async function fetchTicketEmails(
               }
             }
 
-            // Truncate date to second precision for stable hashing
-            // (IMAP dates have second-level precision; avoid ms drift)
             const rawDate = msg.envelope.date || new Date(0)
             const stableDate = new Date(Math.floor(rawDate.getTime() / 1000) * 1000)
+            const messageId = msg.envelope.messageId || `${msg.uid}@${mailboxPath}`
+
+            if (seenMessageIds.has(messageId)) continue
+            seenMessageIds.add(messageId)
 
             const email: Email = {
-              messageId: msg.envelope.messageId || `${msg.uid}@unknown`,
+              messageId,
               from: fromName ? `${fromName} <${fromAddress}>` : fromAddress,
               subject: msg.envelope.subject || '(no subject)',
               date: stableDate,
@@ -355,29 +395,26 @@ export async function fetchTicketEmails(
             emails.push(email)
             senderEmails.push(email)
           }
-
-          // Notify progress callback with this sender's emails
-          progress?.onSenderComplete(sender, senderEmails)
         } catch (searchError) {
-          console.error(`[imap-client] Error searching for ${sender}:`, searchError)
-          progress?.onError(
-            sender,
-            searchError instanceof Error ? searchError : new Error(String(searchError)),
+          console.error(
+            `[imap-client] Error searching for ${sender} in ${mailboxPath}:`,
+            searchError,
           )
-          // Continue with other senders
+        } finally {
+          lock.release()
         }
       }
 
-      console.log(`[imap-client] Total: ${emails.length} ticket emails`)
-    } finally {
-      lock.release()
+      progress?.onSenderComplete(sender, senderEmails)
     }
 
-    await client.logout()
+    console.log(`[imap-client] Total: ${emails.length} ticket emails`)
   } catch (error) {
     console.error('[imap-client] Error fetching ticket emails:', error)
     progress?.onConnectionError?.(error instanceof Error ? error : new Error(String(error)))
     throw error
+  } finally {
+    await safelyCloseClient(client)
   }
 
   return emails
@@ -406,6 +443,7 @@ export async function searchEmailsByQuery(
   const client = createClient(credentials.host, credentials.port, credentials.email, password)
 
   const emails: Email[] = []
+  const seenMessageIds = new Set<string>()
 
   try {
     progress?.onConnecting?.()
@@ -413,21 +451,30 @@ export async function searchEmailsByQuery(
     await client.connect()
     progress?.onConnected?.()
 
-    const lock = await client.getMailboxLock('INBOX')
+    const mailboxesToScan = await getMailboxesToScan(client)
+    console.log(`[imap-client] Query search mailboxes: ${mailboxesToScan.join(', ')}`)
 
-    try {
-      // Calculate date range
-      let sinceDate: Date
-      if (options.sinceDate) {
-        sinceDate = new Date(options.sinceDate)
-      } else if (options.lookbackDays) {
-        sinceDate = new Date(Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000)
-      } else {
-        sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    // Calculate date range
+    let sinceDate: Date
+    if (options.sinceDate) {
+      sinceDate = new Date(options.sinceDate)
+    } else if (options.lookbackDays) {
+      sinceDate = new Date(Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000)
+    } else {
+      sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    }
+    const beforeDate = options.beforeDate ? new Date(options.beforeDate) : undefined
+
+    progress?.onSenderStart(searchTerm)
+
+    for (const mailboxPath of mailboxesToScan) {
+      let lock
+      try {
+        lock = await client.getMailboxLock(mailboxPath)
+      } catch (lockError) {
+        console.warn(`[imap-client] Could not lock mailbox "${mailboxPath}":`, lockError)
+        continue
       }
-      const beforeDate = options.beforeDate ? new Date(options.beforeDate) : undefined
-
-      progress?.onSenderStart(searchTerm)
 
       try {
         const results = await client.search({
@@ -436,33 +483,22 @@ export async function searchEmailsByQuery(
           ...(beforeDate && { before: beforeDate }),
         })
 
-        if (!results) {
-          console.log(`[imap-client] No results for query "${searchTerm}" (returned ${results})`)
-          progress?.onSenderComplete(searchTerm, [])
-          return emails
-        }
+        if (!results) continue
 
         let resultArray: number[]
         if (Array.isArray(results)) {
           resultArray = results
-        } else if ((results as any) instanceof Set) {
-          resultArray = Array.from(results as unknown as Set<number>)
+        } else if ((results as unknown) instanceof Set) {
+          resultArray = Array.from(results as Set<number>)
         } else {
-          console.warn(
-            `[imap-client] Unexpected search result type for query "${searchTerm}":`,
-            typeof results,
-            results,
-          )
-          progress?.onSenderComplete(searchTerm, [])
-          return emails
+          continue
         }
 
-        if (resultArray.length === 0) {
-          progress?.onSenderComplete(searchTerm, [])
-          return emails
-        }
+        if (resultArray.length === 0) continue
 
-        console.log(`[imap-client] Found ${resultArray.length} emails matching "${searchTerm}"`)
+        console.log(
+          `[imap-client] Found ${resultArray.length} emails matching "${searchTerm}" in ${mailboxPath}`,
+        )
 
         // Limit to 50 results
         const uidsToFetch = resultArray.slice(0, 50)
@@ -497,47 +533,48 @@ export async function searchEmailsByQuery(
 
           const rawDate = msg.envelope.date || new Date(0)
           const stableDate = new Date(Math.floor(rawDate.getTime() / 1000) * 1000)
+          const messageId = msg.envelope.messageId || `${msg.uid}@${mailboxPath}`
+
+          if (seenMessageIds.has(messageId)) continue
+          seenMessageIds.add(messageId)
 
           emails.push({
-            messageId: msg.envelope.messageId || `${msg.uid}@unknown`,
+            messageId,
             from: fromName ? `${fromName} <${fromAddress}>` : fromAddress,
             subject: msg.envelope.subject || '(no subject)',
             date: stableDate,
             body: body.trim(),
           })
         }
-
-        // Client-side filter: keep only emails with a ticket keyword in the subject
-        const filtered = emails.filter((e) => {
-          const lowerSubject = e.subject.toLowerCase()
-          return TICKET_KEYWORDS.some((kw) => lowerSubject.includes(kw))
-        })
-
-        // Replace emails array contents with filtered results
-        emails.length = 0
-        emails.push(...filtered)
-
-        console.log(
-          `[imap-client] After ticket keyword filter: ${filtered.length} emails remain`,
-        )
-
-        progress?.onSenderComplete(searchTerm, filtered)
       } catch (searchError) {
-        console.error(`[imap-client] Error searching for query "${searchTerm}":`, searchError)
-        progress?.onError(
-          searchTerm,
-          searchError instanceof Error ? searchError : new Error(String(searchError)),
+        console.error(
+          `[imap-client] Error searching for query "${searchTerm}" in ${mailboxPath}:`,
+          searchError,
         )
+      } finally {
+        lock.release()
       }
-    } finally {
-      lock.release()
     }
 
-    await client.logout()
+    // Client-side filter: keep only emails with a ticket keyword in the subject
+    const filtered = emails.filter((e) => {
+      const lowerSubject = e.subject.toLowerCase()
+      return TICKET_KEYWORDS.some((kw) => lowerSubject.includes(kw))
+    })
+
+    // Replace emails array contents with filtered results
+    emails.length = 0
+    emails.push(...filtered)
+
+    console.log(`[imap-client] After ticket keyword filter: ${filtered.length} emails remain`)
+
+    progress?.onSenderComplete(searchTerm, filtered)
   } catch (error) {
     console.error('[imap-client] Error in searchEmailsByQuery:', error)
     progress?.onConnectionError?.(error instanceof Error ? error : new Error(String(error)))
     throw error
+  } finally {
+    await safelyCloseClient(client)
   }
 
   return emails
