@@ -12,8 +12,7 @@ if (!isDev && !isPreviewUrl) {
 }
 
 // Get environment
-const env = Astro.locals.runtime.env
-const mainAppUrl = env.MAIN_APP_URL || 'https://areyougo.ing'
+const mainAppUrl = process.env.MAIN_APP_URL || 'https://areyougo.ing'
 
 // Check if user is already authenticated
 const user = await verifySession(Astro.request, mainAppUrl)

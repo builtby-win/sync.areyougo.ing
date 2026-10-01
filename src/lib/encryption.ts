@@ -21,7 +21,7 @@ export async function encryptPassword(
 
   return {
     encrypted: arrayBufferToBase64(ciphertext),
-    iv: arrayBufferToBase64(iv),
+    iv: arrayBufferToBase64(iv.buffer as ArrayBuffer),
   }
 }
 
