@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Install pnpm and git
 RUN apk add --no-cache git && \
-    corepack enable && corepack prepare pnpm@latest --activate
+    corepack enable && corepack prepare pnpm@9 --activate
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
@@ -29,7 +29,7 @@ WORKDIR /app
 
 # Install wget for healthcheck and pnpm
 RUN apk add --no-cache wget && \
-    corepack enable && corepack prepare pnpm@latest --activate
+    corepack enable && corepack prepare pnpm@9 --activate
 
 # Copy package files
 COPY package.json pnpm-lock.yaml ./
